@@ -461,6 +461,20 @@ code {
 .key-paste-details summary::before { content: '▸ '; }
 .key-paste-details[open] summary::before { content: '▾ '; }
 
+/* Passkey Sources */
+.passkey-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
 /* Changelog */
 .changelog-entry {
   padding: 16px 0;
