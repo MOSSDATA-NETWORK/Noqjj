@@ -440,6 +440,27 @@ code {
 .settings-item-title { font-size: 14px; font-weight: 600; }
 .settings-item-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 
+/* Key Upload */
+.key-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.key-dropzone:hover,
+.key-dropzone-active {
+  border-color: var(--accent);
+  background: rgba(0,122,255,0.04);
+}
+.key-paste-details summary::marker { content: ''; }
+.key-paste-details summary::before { content: '▸ '; }
+.key-paste-details[open] summary::before { content: '▾ '; }
+
 /* Changelog */
 .changelog-entry {
   padding: 16px 0;

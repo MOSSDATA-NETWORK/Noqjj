@@ -56,9 +56,8 @@ export async function registerPasskey(options: {
         type: 'public-key' as PublicKeyCredentialType,
       })),
       authenticatorSelection: {
-        authenticatorAttachment: 'platform',
-        userVerification: 'preferred',
-        residentKey: 'preferred',
+        userVerification: 'required',
+        residentKey: 'required',
       },
     },
   }
