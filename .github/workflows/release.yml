@@ -64,32 +64,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-gnu
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Download static
         uses: actions/download-artifact@v4
         with:
           name: frontend-static
           path: backend/static/
-      - name: Install cross-compilation tools
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu pkg-config libssl-dev:arm64
-      - name: Configure linker
-        run: |
-          mkdir -p .cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
-          echo 'rustflags = ["-L", "/usr/lib/aarch64-linux-gnu"]' >> .cargo/config.toml
-      - name: Set env for pkg-config
-        run: |
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=/usr/include" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu" >> $GITHUB_ENV
       - name: Build
         run: |
           cd backend
-          cargo build --release --target aarch64-unknown-linux-gnu
+          cross build --release --target aarch64-unknown-linux-gnu
       - name: Rename
         run: cp backend/target/aarch64-unknown-linux-gnu/release/chicken-detect-backend noqjj-linux-aarch64
       - uses: actions/upload-artifact@v4
