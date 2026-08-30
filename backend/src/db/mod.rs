@@ -11,7 +11,7 @@ pub struct Host {
     pub username: String,
     pub auth_type: String,
     pub password_encrypted: Option<String>,
-    pub ssh_key_path: Option<String>,
+    pub ssh_key_encrypted: Option<String>,
     pub api_token_encrypted: Option<String>,
     pub status: String,
     pub agent_deployed: bool,
@@ -29,7 +29,7 @@ pub struct HostPublic {
     pub username: String,
     pub auth_type: String,
     pub has_password: bool,
-    pub ssh_key_path: Option<String>,
+    pub has_ssh_key: bool,
     pub has_api_token: bool,
     pub status: String,
     pub agent_deployed: bool,
@@ -48,7 +48,7 @@ impl Host {
             username: self.username.clone(),
             auth_type: self.auth_type.clone(),
             has_password: self.password_encrypted.is_some(),
-            ssh_key_path: self.ssh_key_path.clone(),
+            has_ssh_key: self.ssh_key_encrypted.is_some(),
             has_api_token: self.api_token_encrypted.is_some(),
             status: self.status.clone(),
             agent_deployed: self.agent_deployed,
@@ -67,7 +67,7 @@ pub struct CreateHost {
     pub username: Option<String>,
     pub auth_type: Option<String>,
     pub password: Option<String>,
-    pub ssh_key_path: Option<String>,
+    pub ssh_key_content: Option<String>,
     pub api_token: Option<String>,
 }
 
@@ -79,7 +79,7 @@ pub struct UpdateHost {
     pub username: Option<String>,
     pub auth_type: Option<String>,
     pub password: Option<String>,
-    pub ssh_key_path: Option<String>,
+    pub ssh_key_content: Option<String>,
     pub api_token: Option<String>,
 }
 
@@ -177,12 +177,13 @@ pub async fn create_host(pool: &SqlitePool, h: CreateHost, master_key: &[u8]) ->
     let username = h.username.unwrap_or_else(|| "root".to_string());
     let auth_type = h.auth_type.unwrap_or_else(|| "password".to_string());
     let password_enc = h.password.map(|p| crate::crypto::encrypt(&p, master_key));
+    let key_enc = h.ssh_key_content.map(|k| crate::crypto::encrypt(&k, master_key));
     let token_enc = h.api_token.map(|t| crate::crypto::encrypt(&t, master_key));
 
     let id = sqlx::query(
-        "INSERT INTO hosts (name, host, port, username, auth_type, password_encrypted, ssh_key_path, api_token_encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO hosts (name, host, port, username, auth_type, password_encrypted, ssh_key_encrypted, api_token_encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .bind(&h.name).bind(&h.host).bind(port).bind(&username).bind(&auth_type).bind(&password_enc).bind(&h.ssh_key_path).bind(&token_enc)
+    .bind(&h.name).bind(&h.host).bind(port).bind(&username).bind(&auth_type).bind(&password_enc).bind(&key_enc).bind(&token_enc)
     .execute(pool).await?.last_insert_rowid();
     get_host(pool, id).await
 }
@@ -194,19 +195,22 @@ pub async fn update_host(pool: &SqlitePool, id: i64, h: UpdateHost, master_key: 
     let port = h.port.unwrap_or(existing.port);
     let username = h.username.unwrap_or(existing.username);
     let auth_type = h.auth_type.unwrap_or(existing.auth_type);
-    let ssh_key_path = h.ssh_key_path.or(existing.ssh_key_path);
 
     let password_enc = match h.password {
         Some(p) if !p.is_empty() => Some(crate::crypto::encrypt(&p, master_key)),
         _ => existing.password_encrypted,
+    };
+    let key_enc = match h.ssh_key_content {
+        Some(k) if !k.is_empty() => Some(crate::crypto::encrypt(&k, master_key)),
+        _ => existing.ssh_key_encrypted,
     };
     let token_enc = match h.api_token {
         Some(t) if !t.is_empty() => Some(crate::crypto::encrypt(&t, master_key)),
         _ => existing.api_token_encrypted,
     };
 
-    sqlx::query("UPDATE hosts SET name=?, host=?, port=?, username=?, auth_type=?, password_encrypted=?, ssh_key_path=?, api_token_encrypted=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
-        .bind(&name).bind(&host).bind(port).bind(&username).bind(&auth_type).bind(&password_enc).bind(&ssh_key_path).bind(&token_enc).bind(id)
+    sqlx::query("UPDATE hosts SET name=?, host=?, port=?, username=?, auth_type=?, password_encrypted=?, ssh_key_encrypted=?, api_token_encrypted=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+        .bind(&name).bind(&host).bind(port).bind(&username).bind(&auth_type).bind(&password_enc).bind(&key_enc).bind(&token_enc).bind(id)
         .execute(pool).await?;
     get_host(pool, id).await
 }

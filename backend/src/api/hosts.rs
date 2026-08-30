@@ -21,15 +21,14 @@ pub async fn get(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Jso
 }
 
 pub async fn create(State(state): State<Arc<AppState>>, Json(body): Json<db::CreateHost>) -> Json<Value> {
-    // 创建主机记录
     let host = match db::create_host(&state.db, body, &state.master_key).await {
         Ok(h) => h,
         Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
     };
 
     // 自动部署检测脚本
-    let password = decrypt_host_password(&host, &state.master_key);
-    match crate::deploy::deploy_script(&host.host, host.port as u16, &host.username, password.as_deref()).await {
+    let auth = make_ssh_auth(&host, &state.master_key);
+    match crate::deploy::deploy_script(&host.host, host.port as u16, &host.username, &auth).await {
         Ok(_) => {
             let _ = db::update_host_agent_status(&state.db, host.id, true).await;
             Json(json!({"ok": true, "data": host.to_public(), "message": "主机已添加，检测脚本已部署"}))
@@ -60,8 +59,8 @@ pub async fn test_connection(State(state): State<Arc<AppState>>, Path(id): Path<
         Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
     };
 
-    let password = decrypt_host_password(&host, &state.master_key);
-    match crate::deploy::deploy_script(&host.host, host.port as u16, &host.username, password.as_deref()).await {
+    let auth = make_ssh_auth(&host, &state.master_key);
+    match crate::deploy::deploy_script(&host.host, host.port as u16, &host.username, &auth).await {
         Ok(_) => {
             let _ = db::update_host_status(&state.db, id, "online").await;
             let _ = db::update_host_agent_status(&state.db, id, true).await;
@@ -80,18 +79,20 @@ pub async fn deploy(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> 
         Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
     };
 
-    let password = decrypt_host_password(&host, &state.master_key);
-    match crate::deploy::deploy_script(&host.host, host.port as u16, &host.username, password.as_deref()).await {
+    let auth = make_ssh_auth(&host, &state.master_key);
+    match crate::deploy::deploy_script(&host.host, host.port as u16, &host.username, &auth).await {
         Ok(_) => {
-            let _ = db::update_host_agent_status(&state.db, id, true).await;
+            let _ = db::update_host_agent_status(&state.db, host.id, true).await;
             Json(json!({"ok": true, "message": "检测脚本已部署"}))
         }
         Err(e) => Json(json!({"ok": false, "error": format!("部署失败: {}", e)})),
     }
 }
 
-fn decrypt_host_password(host: &db::Host, master_key: &[u8]) -> Option<String> {
-    host.password_encrypted.as_ref().and_then(|enc| {
-        crate::crypto::decrypt(enc, master_key).ok()
-    })
+fn make_ssh_auth(host: &db::Host, master_key: &[u8]) -> crate::deploy::SshAuth {
+    crate::deploy::SshAuth::from_host(
+        host.password_encrypted.as_deref(),
+        host.ssh_key_encrypted.as_deref(),
+        master_key,
+    )
 }

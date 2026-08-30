@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     username TEXT DEFAULT 'root',
     auth_type TEXT DEFAULT 'password',
     password_encrypted TEXT,
-    ssh_key_path TEXT,
+    ssh_key_encrypted TEXT,
     api_token_encrypted TEXT,
     status TEXT DEFAULT 'unknown',
     agent_deployed INTEGER DEFAULT 0,

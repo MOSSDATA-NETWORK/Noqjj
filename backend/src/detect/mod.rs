@@ -39,14 +39,16 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             continue;
         }
 
-        // 解密密码
-        let password = host.password_encrypted.as_ref().and_then(|enc| {
-            crate::crypto::decrypt(enc, &state.master_key).ok()
-        });
+        // 构建认证方式
+        let auth = crate::deploy::SshAuth::from_host(
+            host.password_encrypted.as_deref(),
+            host.ssh_key_encrypted.as_deref(),
+            &state.master_key,
+        );
 
         // 远程执行检测脚本
         let output = match crate::deploy::run_remote_scan(
-            &host.host, host.port as u16, &host.username, password.as_deref(), None
+            &host.host, host.port as u16, &host.username, &auth, None
         ).await {
             Ok(o) => o,
             Err(e) => {

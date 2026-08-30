@@ -6,7 +6,9 @@ const hosts = ref<any[]>([])
 const loading = ref(true)
 const showModal = ref(false)
 const editHost = ref<any>(null)
-const form = ref({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', ssh_key_path: '', api_token: '' })
+const form = ref({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', ssh_key_content: '', api_token: '' })
+const keyDragOver = ref(false)
+const keyFileInput = ref<HTMLInputElement | null>(null)
 const testing = ref<number | null>(null)
 const scanning = ref(false)
 const deploying = ref<number | null>(null)
@@ -25,13 +27,13 @@ async function loadHosts() {
 
 function openAdd() {
   editHost.value = null
-  form.value = { name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', ssh_key_path: '', api_token: '' }
+  form.value = { name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', ssh_key_content: '', api_token: '' }
   showModal.value = true
 }
 
 function openEdit(h: any) {
   editHost.value = h
-  form.value = { name: h.name, host: h.host, port: h.port, username: h.username, auth_type: h.auth_type || 'password', password: '', ssh_key_path: h.ssh_key_path || '', api_token: '' }
+  form.value = { name: h.name, host: h.host, port: h.port, username: h.username, auth_type: h.auth_type || 'password', password: '', ssh_key_content: '', api_token: '' }
   showModal.value = true
 }
 
@@ -39,7 +41,7 @@ async function saveHost() {
   if (!form.value.name || !form.value.host) return
   const data: any = { ...form.value }
   if (!data.password) delete data.password
-  if (!data.ssh_key_path) delete data.ssh_key_path
+  if (!data.ssh_key_content) delete data.ssh_key_content
   if (!data.api_token) delete data.api_token
 
   if (editHost.value) {
@@ -92,6 +94,51 @@ async function scanHost(hostId: number) {
 function authTypeLabel(t: string) {
   const m: Record<string, string> = { password: '密码', ssh_key: 'SSH Key', api_token: 'API Token' }
   return m[t] || t
+}
+
+// SSH Key drag & drop
+function onKeyDragOver(e: DragEvent) {
+  e.preventDefault()
+  keyDragOver.value = true
+}
+
+function onKeyDragLeave() {
+  keyDragOver.value = false
+}
+
+function onKeyDrop(e: DragEvent) {
+  e.preventDefault()
+  keyDragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) readKeyFile(file)
+}
+
+function onKeyFileSelect(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) readKeyFile(file)
+  input.value = ''
+}
+
+function readKeyFile(file: File) {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const content = e.target?.result as string
+    if (content.includes('PRIVATE KEY') || content.includes('OPENSSH')) {
+      form.value.ssh_key_content = content.trim()
+    } else {
+      alert('文件内容不是有效的 SSH 私钥')
+    }
+  }
+  reader.readAsText(file)
+}
+
+function triggerKeyUpload() {
+  keyFileInput.value?.click()
+}
+
+function clearKey() {
+  form.value.ssh_key_content = ''
 }
 </script>
 
@@ -189,8 +236,48 @@ function authTypeLabel(t: string) {
           </div>
 
           <div v-if="form.auth_type === 'ssh_key'" class="form-group">
-            <label class="form-label">SSH 私钥路径</label>
-            <input class="form-input" v-model="form.ssh_key_path" placeholder="/root/.ssh/id_rsa" />
+            <label class="form-label">SSH 私钥</label>
+            <!-- 已上传状态 -->
+            <div v-if="form.ssh_key_content" class="key-uploaded">
+              <div class="key-uploaded-info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="color:var(--green)"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <span>私钥已加载 ({{ form.ssh_key_content.split('\n').length }} 行)</span>
+              </div>
+              <div class="key-uploaded-actions">
+                <button class="btn btn-sm btn-secondary" @click="form.ssh_key_content = form.ssh_key_content ? '' : ''">查看</button>
+                <button class="btn btn-sm btn-danger" @click="clearKey">删除</button>
+              </div>
+            </div>
+            <!-- 上传区域 -->
+            <div v-else
+              class="key-dropzone"
+              :class="{ 'key-dropzone-active': keyDragOver }"
+              @dragover="onKeyDragOver"
+              @dragleave="onKeyDragLeave"
+              @drop="onKeyDrop"
+              @click="triggerKeyUpload"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32" style="color:var(--text-tertiary);margin-bottom:8px;">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <div style="font-size:14px;font-weight:500;margin-bottom:4px;">拖拽私钥文件到此处</div>
+              <div style="font-size:12px;color:var(--text-secondary);">或点击选择文件</div>
+              <input ref="keyFileInput" type="file" accept=".pem,.key,id_rsa,id_ed25519,*" style="display:none" @change="onKeyFileSelect" />
+            </div>
+            <!-- 粘贴区域 -->
+            <div style="margin-top:8px;">
+              <details class="key-paste-details">
+                <summary style="font-size:12px;color:var(--accent);cursor:pointer;">或粘贴私钥内容</summary>
+                <textarea class="form-input" v-model="form.ssh_key_content" rows="6"
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----
+粘贴完整私钥内容...
+-----END OPENSSH PRIVATE KEY-----"
+                  style="margin-top:8px;font-family:monospace;font-size:12px;resize:vertical;"></textarea>
+              </details>
+            </div>
+            <div style="font-size:11px;color:var(--text-tertiary);margin-top:6px;">
+              私钥将加密存储在平台服务器上，用于 SSH 连接 PVE 主机
+            </div>
           </div>
 
           <div v-if="form.auth_type === 'api_token'" class="form-group">
@@ -209,3 +296,51 @@ function authTypeLabel(t: string) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.key-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.key-dropzone:hover,
+.key-dropzone-active {
+  border-color: var(--accent);
+  background: rgba(0,122,255,0.04);
+}
+.key-uploaded {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(52,199,89,0.08);
+  border: 1px solid rgba(52,199,89,0.2);
+  border-radius: 10px;
+}
+.key-uploaded-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.key-uploaded-actions {
+  display: flex;
+  gap: 8px;
+}
+.key-paste-details summary::marker {
+  content: '';
+}
+.key-paste-details summary::before {
+  content: '▸ ';
+}
+.key-paste-details[open] summary::before {
+  content: '▾ ';
+}
+</style>
