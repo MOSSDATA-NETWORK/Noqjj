@@ -29,3 +29,10 @@ export const notificationsApi = {
   update: (id: number, data: any) => api.put(`/notifications/${id}`, data).then(r => r.data),
   test: () => api.post('/notifications/test').then(r => r.data),
 }
+
+export const versionApi = {
+  current: () => api.get('/version').then(r => r.data),
+  check: () => api.get('/version/check').then(r => r.data),
+  changelog: () => api.get('/version/changelog').then(r => r.data),
+  update: () => api.post('/version/update').then(r => r.data),
+}

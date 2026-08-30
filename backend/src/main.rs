@@ -8,6 +8,7 @@ mod notify;
 mod passkey;
 mod scheduler;
 mod totp;
+mod version;
 
 use axum::Router;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -77,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(CorsLayer::permissive());
 
     let addr = format!("0.0.0.0:{}", port);
-    tracing::info!("Chicken Detect running on http://0.0.0.0:{}", port);
+    tracing::info!("Noqjj v{} running on http://0.0.0.0:{}", version::VERSION, port);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

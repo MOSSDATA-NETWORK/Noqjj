@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noqjj — 禁止切鸡鸡</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      <path d="M9 12l2 2 4-4"/>
+    </svg>
+    Noqjj
+  </div>
+  <nav class="sidebar-nav">
+    <a class="nav-item active" onclick="showPage('dashboard')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      总览
+    </a>
+    <a class="nav-item" onclick="showPage('hosts')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+      主机管理
+    </a>
+    <a class="nav-item" onclick="showPage('scans')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      扫描记录
+    </a>
+    <a class="nav-item" onclick="showPage('results')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      检测结果
+    </a>
+    <a class="nav-item" onclick="showPage('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      通知设置
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="update-banner" onclick="showPage('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      新版本 v0.3.0
+    </div>
+    <div class="version-text">v0.2.0</div>
+  </div>
+</aside>
+
+<!-- Main Content -->
+<main class="main-content">
+
+  <!-- Dashboard -->
+  <div id="page-dashboard" class="page active">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">总览</h1>
+        <p class="page-subtitle">Noqjj — PVE 切鸡检测平台</p>
+      </div>
+      <button class="btn btn-primary" onclick="alert('扫描已启动')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        扫描全部
+      </button>
+    </div>
+
+    <div class="card-grid">
+      <div class="stat-card">
+        <div class="stat-icon" style="background: rgba(0,122,255,0.1); color: var(--accent);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+        </div>
+        <div>
+          <div class="stat-value">5</div>
+          <div class="stat-label">PVE 主机</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background: rgba(52,199,89,0.1); color: var(--green);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div>
+          <div class="stat-value">5</div>
+          <div class="stat-label">在线主机</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background: rgba(175,82,222,0.1); color: var(--purple);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <div>
+          <div class="stat-value">1,247</div>
+          <div class="stat-label">已扫描 VM</div>
+        </div>
+      </div>
+      <div class="stat-card threat">
+        <div class="stat-icon" style="background: rgba(255,59,48,0.1); color: var(--red);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div>
+          <div class="stat-value" style="color: var(--red)">3</div>
+          <div class="stat-label">活跃威胁</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <!-- Recent Scans -->
+      <div class="card">
+        <div class="card-header">
+          <h3>最近扫描</h3>
+          <a class="link" onclick="showPage('scans')">查看全部</a>
+        </div>
+        <div class="list-item" v-for>
+          <div class="list-item-left">
+            <div class="list-item-title">扫描 #42</div>
+            <div class="list-item-sub">全部主机 · 2 分钟前</div>
+          </div>
+          <span class="badge badge-detected">
+            <span class="badge-dot"></span>
+            3 台命中
+          </span>
+        </div>
+        <div class="list-item">
+          <div class="list-item-left">
+            <div class="list-item-title">扫描 #41</div>
+            <div class="list-item-sub">tpe2-srv18 · 6 小时前</div>
+          </div>
+          <span class="badge badge-clean">
+            <span class="badge-dot"></span>
+            全部正常
+          </span>
+        </div>
+        <div class="list-item">
+          <div class="list-item-left">
+            <div class="list-item-title">扫描 #40</div>
+            <div class="list-item-sub">全部主机 · 12 小时前</div>
+          </div>
+          <span class="badge badge-detected">
+            <span class="badge-dot"></span>
+            1 台命中
+          </span>
+        </div>
+        <div class="list-item">
+          <div class="list-item-left">
+            <div class="list-item-title">扫描 #39</div>
+            <div class="list-item-sub">hkg1-srv03 · 1 天前</div>
+          </div>
+          <span class="badge badge-clean">
+            <span class="badge-dot"></span>
+            全部正常
+          </span>
+        </div>
+      </div>
+
+      <!-- Threats -->
+      <div class="card">
+        <div class="card-header">
+          <h3>威胁列表</h3>
+          <a class="link" onclick="showPage('results')">查看全部</a>
+        </div>
+        <div class="list-item threat-item">
+          <div class="list-item-left">
+            <div class="list-item-title">VM 320</div>
+            <div class="list-item-sub">tpe2-srv18 · 首次发现: 2026-08-25</div>
+          </div>
+          <span class="badge badge-detected">
+            <span class="badge-dot"></span>
+            新发现
+          </span>
+        </div>
+        <div class="list-item threat-item">
+          <div class="list-item-left">
+            <div class="list-item-title">VM 571</div>
+            <div class="list-item-sub">tpe2-srv18 · 首次发现: 2026-08-28</div>
+          </div>
+          <span class="badge badge-confirmed">
+            <span class="badge-dot"></span>
+            持续存在
+          </span>
+        </div>
+        <div class="list-item threat-item">
+          <div class="list-item-left">
+            <div class="list-item-title">VM 188</div>
+            <div class="list-item-sub">hkg1-srv03 · 首次发现: 2026-08-30</div>
+          </div>
+          <span class="badge badge-detected">
+            <span class="badge-dot"></span>
+            新发现
+          </span>
+        </div>
+        <div class="list-item" style="opacity: 0.5;">
+          <div class="list-item-left">
+            <div class="list-item-title">VM 245</div>
+            <div class="list-item-sub">tpe2-srv18 · 已清除: 2026-08-29</div>
+          </div>
+          <span class="badge badge-cleaned">
+            <span class="badge-dot"></span>
+            已清除
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hosts -->
+  <div id="page-hosts" class="page">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">主机管理</h1>
+        <p class="page-subtitle">管理 PVE 宿主机，添加后自动部署检测脚本</p>
+      </div>
+      <div style="display:flex;gap:12px;">
+        <button class="btn btn-secondary">扫描全部</button>
+        <button class="btn btn-primary" onclick="document.getElementById('addModal').classList.add('show')">+ 添加主机</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>名称</th><th>地址</th><th>接入方式</th><th>状态</th><th>Agent</th><th style="text-align:right">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>tpe2-srv18</strong></td>
+            <td><code>78.105.182.253:22</code></td>
+            <td>SSH 密码</td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>online</span></td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>已部署</span></td>
+            <td class="actions">
+              <button class="btn btn-sm btn-secondary">扫描</button>
+              <button class="btn btn-sm btn-secondary">编辑</button>
+              <button class="btn btn-sm btn-danger">删除</button>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>hkg1-srv03</strong></td>
+            <td><code>103.152.218.12:22</code></td>
+            <td>SSH Key</td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>online</span></td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>已部署</span></td>
+            <td class="actions">
+              <button class="btn btn-sm btn-secondary">扫描</button>
+              <button class="btn btn-sm btn-secondary">编辑</button>
+              <button class="btn btn-sm btn-danger">删除</button>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>sgp1-srv07</strong></td>
+            <td><code>194.233.82.55:22</code></td>
+            <td>API Token</td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>online</span></td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>已部署</span></td>
+            <td class="actions">
+              <button class="btn btn-sm btn-secondary">扫描</button>
+              <button class="btn btn-sm btn-secondary">编辑</button>
+              <button class="btn btn-sm btn-danger">删除</button>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>us-west-srv01</strong></td>
+            <td><code>45.76.102.33:22</code></td>
+            <td>SSH 密码</td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>online</span></td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>已部署</span></td>
+            <td class="actions">
+              <button class="btn btn-sm btn-secondary">扫描</button>
+              <button class="btn btn-sm btn-secondary">编辑</button>
+              <button class="btn btn-sm btn-danger">删除</button>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>de-fra-srv02</strong></td>
+            <td><code>5.189.160.88:22</code></td>
+            <td>SSH 密码</td>
+            <td><span class="badge badge-offline"><span class="badge-dot"></span>offline</span></td>
+            <td><span class="badge badge-unknown"><span class="badge-dot"></span>未部署</span></td>
+            <td class="actions">
+              <button class="btn btn-sm btn-secondary">测试连接</button>
+              <button class="btn btn-sm btn-secondary">编辑</button>
+              <button class="btn btn-sm btn-danger">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Scans -->
+  <div id="page-scans" class="page">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">扫描记录</h1>
+        <p class="page-subtitle">查看历史扫描任务</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>ID</th><th>主机</th><th>状态</th><th>VM</th><th>GA</th><th>磁盘</th><th>命中</th><th>耗时</th><th>时间</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>#42</strong></td><td>全部</td><td><span class="badge badge-clean"><span class="badge-dot"></span>已完成</span></td><td>1247</td><td>892</td><td>355</td><td style="color:var(--red);font-weight:600">3</td><td>12分34秒</td><td>2026-08-31 02:00</td></tr>
+          <tr><td><strong>#41</strong></td><td>tpe2-srv18</td><td><span class="badge badge-clean"><span class="badge-dot"></span>已完成</span></td><td>287</td><td>201</td><td>86</td><td style="color:var(--green);font-weight:600">0</td><td>3分12秒</td><td>2026-08-30 20:00</td></tr>
+          <tr><td><strong>#40</strong></td><td>全部</td><td><span class="badge badge-clean"><span class="badge-dot"></span>已完成</span></td><td>1247</td><td>890</td><td>357</td><td style="color:var(--red);font-weight:600">1</td><td>11分58秒</td><td>2026-08-30 14:00</td></tr>
+          <tr><td><strong>#39</strong></td><td>hkg1-srv03</td><td><span class="badge badge-clean"><span class="badge-dot"></span>已完成</span></td><td>156</td><td>98</td><td>58</td><td style="color:var(--green);font-weight:600">0</td><td>2分05秒</td><td>2026-08-30 08:00</td></tr>
+          <tr><td><strong>#38</strong></td><td>全部</td><td><span class="badge badge-detected"><span class="badge-dot"></span>已完成</span></td><td>1247</td><td>888</td><td>359</td><td style="color:var(--red);font-weight:600">2</td><td>12分21秒</td><td>2026-08-30 02:00</td></tr>
+          <tr><td><strong>#37</strong></td><td>sgp1-srv07</td><td><span class="badge badge-clean"><span class="badge-dot"></span>已完成</span></td><td>203</td><td>145</td><td>58</td><td style="color:var(--green);font-weight:600">0</td><td>2分44秒</td><td>2026-08-29 20:00</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="page-results" class="page">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">检测结果</h1>
+        <p class="page-subtitle">查看所有 VM 的检测状态</p>
+      </div>
+      <div style="display:flex;gap:12px;">
+        <select class="form-input" style="width:160px">
+          <option>全部主机</option>
+          <option>tpe2-srv18</option>
+          <option>hkg1-srv03</option>
+          <option>sgp1-srv07</option>
+        </select>
+        <select class="form-input" style="width:140px">
+          <option>全部状态</option>
+          <option>新发现</option>
+          <option>持续存在</option>
+          <option>已清除</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>VM</th><th>主机</th><th>状态</th><th>检测方式</th><th>证据</th><th>首次发现</th><th>最后检测</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>VM 320</strong></td>
+            <td>tpe2-srv18</td>
+            <td><span class="badge badge-detected"><span class="badge-dot"></span>新发现</span></td>
+            <td><code>disk</code></td>
+            <td class="evidence">incus_dir incushlii_agent nodeget_agent systemd_svc:12 history:5</td>
+            <td>2026-08-25</td>
+            <td>2026-08-31 02:00</td>
+          </tr>
+          <tr>
+            <td><strong>VM 571</strong></td>
+            <td>tpe2-srv18</td>
+            <td><span class="badge badge-confirmed"><span class="badge-dot"></span>持续存在</span></td>
+            <td><code>ga</code></td>
+            <td class="evidence">incus_dir incushlii_agent nodeget_agent systemd_svc:8</td>
+            <td>2026-08-28</td>
+            <td>2026-08-31 02:00</td>
+          </tr>
+          <tr>
+            <td><strong>VM 188</strong></td>
+            <td>hkg1-srv03</td>
+            <td><span class="badge badge-detected"><span class="badge-dot"></span>新发现</span></td>
+            <td><code>ga</code></td>
+            <td class="evidence">incushlii_agent nodeget_agent systemd_svc:6 history:3</td>
+            <td>2026-08-30</td>
+            <td>2026-08-30 14:00</td>
+          </tr>
+          <tr style="opacity:0.5">
+            <td><strong>VM 245</strong></td>
+            <td>tpe2-srv18</td>
+            <td><span class="badge badge-cleaned"><span class="badge-dot"></span>已清除</span></td>
+            <td><code>ga</code></td>
+            <td class="evidence">—</td>
+            <td>2026-08-20</td>
+            <td>2026-08-29 14:00</td>
+          </tr>
+          <tr>
+            <td><strong>VM 89</strong></td>
+            <td>sgp1-srv07</td>
+            <td><span class="badge badge-detected"><span class="badge-dot"></span>新发现</span></td>
+            <td><code>disk</code></td>
+            <td class="evidence">incus_dir incus_data systemd_svc:4 history:2</td>
+            <td>2026-08-30</td>
+            <td>2026-08-30 14:00</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div id="page-settings" class="page">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">设置</h1>
+        <p class="page-subtitle">系统设置与更新</p>
+      </div>
+    </div>
+
+    <!-- Version Card -->
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="card-header"><h3>版本信息</h3></div>
+      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+        <div>
+          <div style="font-size: 28px; font-weight: 700;">Noqjj <span style="color: var(--accent);">v0.2.0</span></div>
+          <div style="margin-top: 8px;">
+            <span class="badge badge-detected" style="font-size: 13px;">
+              <span class="badge-dot"></span>
+              新版本 v0.3.0 可用
+            </span>
+          </div>
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <button class="btn btn-secondary">检查更新</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('changelogModal').classList.add('show')">更新日志</button>
+          <button class="btn btn-primary">立即更新</button>
+        </div>
+      </div>
+      <div style="margin-top: 16px; padding: 16px; background: rgba(0,122,255,0.05); border-radius: 12px;">
+        <div style="font-weight: 600; margin-bottom: 8px;">v0.3.0 更新内容</div>
+        <div style="font-size: 14px; color: var(--text-secondary); white-space: pre-wrap;">✨ 新增 Passkey 登录支持
+🔧 优化磁盘挂载检测性能
+🐛 修复 GA 模式下 bash_history 检测遗漏
+📱 新增 Telegram 通知模板自定义</div>
+        <a href="https://github.com/MOSSDATA-NETWORK/Noqjj/releases" target="_blank" style="display: inline-block; margin-top: 8px; font-size: 13px; color: var(--accent);">在 GitHub 查看 →</a>
+      </div>
+    </div>
+
+    <!-- Notification Section -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin: 28px 0 16px;">
+      <h2 style="font-size: 20px; font-weight: 600;">通知设置</h2>
+      <div style="display: flex; gap: 12px;">
+        <button class="btn btn-secondary">测试通知</button>
+        <button class="btn btn-primary">+ 添加通知</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>类型</th><th>状态</th><th>通知级别</th><th>配置</th><th style="text-align:right">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>📱 Telegram</strong></td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>已启用</span></td>
+            <td>新发现 + 已清除</td>
+            <td style="font-size:13px;color:var(--text-secondary)">Bot: 712***:AAH*** · Chat: 102***</td>
+            <td class="actions"><button class="btn btn-sm btn-secondary">编辑</button></td>
+          </tr>
+          <tr>
+            <td><strong>💬 企业微信</strong></td>
+            <td><span class="badge badge-online"><span class="badge-dot"></span>已启用</span></td>
+            <td>仅新发现</td>
+            <td style="font-size:13px;color:var(--text-secondary)">Webhook: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=***</td>
+            <td class="actions"><button class="btn btn-sm btn-secondary">编辑</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Changelog Modal -->
+  <div id="changelogModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+    <div class="modal" style="max-width: 600px;">
+      <div class="modal-header">更新日志</div>
+      <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+        <div class="changelog-entry">
+          <div class="changelog-header">
+            <span class="changelog-version">v0.3.0</span>
+            <span class="changelog-date">2026-08-31</span>
+          </div>
+          <div class="changelog-notes">✨ 新增 Passkey 登录支持
+🔧 优化磁盘挂载检测性能
+🐛 修复 GA 模式下 bash_history 检测遗漏
+📱 新增 Telegram 通知模板自定义</div>
+          <a href="https://github.com/MOSSDATA-NETWORK/Noqjj/releases/tag/v0.3.0" target="_blank" class="changelog-link">在 GitHub 查看 →</a>
+        </div>
+        <div class="changelog-entry">
+          <div class="changelog-header">
+            <span class="changelog-version">v0.2.0</span>
+            <span class="changelog-date">2026-08-30</span>
+          </div>
+          <div class="changelog-notes">🔐 新增 TOTP 身份验证器支持
+🚀 添加主机后自动部署检测脚本
+🔑 支持 SSH Key / PVE API Token 接入
+🎨 Apple Design UI 重构</div>
+        </div>
+        <div class="changelog-entry">
+          <div class="changelog-header">
+            <span class="changelog-version">v0.1.0</span>
+            <span class="changelog-date">2026-08-29</span>
+          </div>
+          <div class="changelog-notes">🎉 首次发布
+🔍 GA + 磁盘挂载双模式检测
+📱 Telegram + 企业微信告警
+⏰ 定时扫描调度</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('changelogModal').classList.remove('show')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Add Host Modal -->
+<div id="addModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <div class="modal-header">添加主机</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">名称</label>
+        <input class="form-input" placeholder="如：tpe2-srv18" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">IP 地址</label>
+        <input class="form-input" placeholder="78.105.182.253" />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label class="form-label">SSH 端口</label>
+          <input class="form-input" value="22" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">用户名</label>
+          <input class="form-input" value="root" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">接入方式</label>
+        <select class="form-input">
+          <option>SSH 密码</option>
+          <option>SSH 私钥</option>
+          <option>PVE API Token</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">密码</label>
+        <input class="form-input" type="password" placeholder="SSH 密码" />
+      </div>
+      <div class="hint">添加后将自动通过 SSH 上传检测脚本到 PVE 宿主机</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('addModal').classList.remove('show')">取消</button>
+      <button class="btn btn-primary" onclick="document.getElementById('addModal').classList.remove('show');alert('主机已添加，检测脚本已部署')">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  event.target.closest('.nav-item')?.classList.add('active');
+}
+</script>
+
+</body>
+</html>

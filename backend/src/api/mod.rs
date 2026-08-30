@@ -3,6 +3,7 @@ pub mod hosts;
 pub mod notifications;
 pub mod results;
 pub mod scans;
+pub mod version;
 
 use axum::{Router, middleware, routing::{get, post, put}};
 use std::sync::Arc;
@@ -16,6 +17,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/verify-totp", post(auth::verify_totp))
         .route("/auth/logout", post(auth::logout))
+        .route("/version", get(version::current))
         .with_state(state.clone());
 
     // 需要认证的路由
@@ -32,6 +34,9 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/notifications/{id}", put(notifications::update))
         .route("/notifications/test", post(notifications::test))
         .route("/auth/password", post(auth::change_password))
+        .route("/version/check", get(version::check))
+        .route("/version/changelog", get(version::changelog))
+        .route("/version/update", post(version::update))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state.clone(), crate::auth::auth_middleware));
 
