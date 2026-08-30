@@ -44,53 +44,74 @@ async fn write_temp_key(key_content: &str) -> anyhow::Result<String> {
     Ok(tmp_path)
 }
 
+/// 验证主机名/用户名格式（防止命令注入）
+fn validate_ssh_target(s: &str) -> anyhow::Result<()> {
+    if s.is_empty() || s.len() > 253 {
+        return Err(anyhow::anyhow!("主机名长度无效"));
+    }
+    if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '@') {
+        return Err(anyhow::anyhow!("主机名包含非法字符"));
+    }
+    Ok(())
+}
+
 /// SSH 命令执行
 pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &str) -> anyhow::Result<String> {
+    validate_ssh_target(host)?;
+    validate_ssh_target(user)?;
+
     let mut key_file_path: Option<String> = None;
-    let mut base_args = vec![
-        "-o".to_string(), "StrictHostKeyChecking=no".to_string(),
+    let mut args = vec![
+        "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
         "-o".to_string(), "ConnectTimeout=10".to_string(),
+        "-o".to_string(), "BatchMode=yes".to_string(),
         "-p".to_string(), port.to_string(),
     ];
 
     match auth {
         SshAuth::Password(pass) => {
-            let ssh_cmd = format!(
-                "ssh {} {}@{} '{}'",
-                base_args.join(" "),
-                user, host,
-                cmd.replace('\'', "'\\''")
-            );
+            // 写密码到临时文件，避免进程列表泄露
+            let pass_file = format!("/tmp/ssh-pass-{}", uuid::Uuid::new_v4());
+            tokio::fs::write(&pass_file, pass).await?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                tokio::fs::set_permissions(&pass_file, std::fs::Permissions::from_mode(0o600)).await?;
+            }
+
+            args.push("-i".to_string());
+            args.push("/dev/null".to_string()); // 不用密钥文件
+            args.push(format!("{}@{}", user, host));
+            args.push(cmd.to_string());
+
             let output = Command::new("sshpass")
-                .args(["-p", pass, "bash", "-c", &ssh_cmd])
+                .args(["-f", &pass_file])
+                .arg("ssh")
+                .args(&args)
                 .output()
-                .await
-                .map_err(|_| anyhow::anyhow!("sshpass 未安装"))?;
+                .await;
+
+            let _ = tokio::fs::remove_file(&pass_file).await;
+            let output = output.map_err(|_| anyhow::anyhow!("sshpass 未安装"))?;
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
         SshAuth::KeyContent(key) => {
             let path = write_temp_key(key).await?;
             key_file_path = Some(path.clone());
-            base_args.push("-i".to_string());
-            base_args.push(path);
-            base_args.push("-o".to_string());
-            base_args.push("BatchMode=yes".to_string());
+            args.push("-i".to_string());
+            args.push(path);
         }
-        SshAuth::None => {
-            base_args.push("-o".to_string());
-            base_args.push("BatchMode=yes".to_string());
-        }
+        SshAuth::None => {}
     }
 
-    base_args.push(format!("{}@{}", user, host));
-    base_args.push(cmd.to_string());
+    args.push(format!("{}@{}", user, host));
+    args.push(cmd.to_string());
 
     let output = Command::new("ssh")
-        .args(&base_args)
+        .args(&args)
         .output()
         .await?;
 
-    // 清理临时密钥文件
     if let Some(path) = key_file_path {
         let _ = tokio::fs::remove_file(path).await;
     }
@@ -100,21 +121,36 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
 
 /// SCP 上传文件
 async fn scp_upload(host: &str, port: u16, user: &str, auth: &SshAuth, local_path: &str, remote_path: &str) -> anyhow::Result<()> {
+    validate_ssh_target(host)?;
+    validate_ssh_target(user)?;
+
     let mut key_file_path: Option<String> = None;
+    let mut pass_file_path: Option<String> = None;
     let mut base_args = vec![
-        "-o".to_string(), "StrictHostKeyChecking=no".to_string(),
+        "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
         "-P".to_string(), port.to_string(),
     ];
 
     match auth {
         SshAuth::Password(pass) => {
+            let pass_file = format!("/tmp/ssh-pass-{}", uuid::Uuid::new_v4());
+            tokio::fs::write(&pass_file, pass).await?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                tokio::fs::set_permissions(&pass_file, std::fs::Permissions::from_mode(0o600)).await?;
+            }
+            pass_file_path = Some(pass_file.clone());
+
             let output = Command::new("sshpass")
-                .args(["-p", pass, "scp"])
+                .args(["-f", &pass_file, "scp"])
                 .args(&base_args)
                 .args([local_path, &format!("{}@{}:{}", user, host, remote_path)])
                 .output()
                 .await
                 .map_err(|_| anyhow::anyhow!("sshpass 未安装"))?;
+
+            if let Some(p) = pass_file_path { let _ = tokio::fs::remove_file(p).await; }
             if !output.status.success() {
                 return Err(anyhow::anyhow!("SCP 失败: {}", String::from_utf8_lossy(&output.stderr)));
             }

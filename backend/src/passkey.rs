@@ -4,8 +4,23 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 /// RP (Relying Party) 配置
-pub const RP_ID: &str = "localhost"; // 生产环境改为实际域名
 pub const RP_NAME: &str = "Noqjj";
+
+/// 获取 RP_ID（从环境变量或默认 localhost）
+pub fn get_rp_id() -> String {
+    std::env::var("RP_ID").unwrap_or_else(|_| "localhost".to_string())
+}
+
+/// 获取期望的 Origin
+pub fn get_expected_origin() -> String {
+    if let Ok(origin) = std::env::var("RP_ORIGIN") {
+        return origin;
+    }
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3210".to_string());
+    let tls = std::env::var("TLS_CERT").is_ok();
+    let scheme = if tls { "https" } else { "http" };
+    format!("{}://localhost:{}", scheme, port)
+}
 
 /// 存储的凭据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,10 +109,11 @@ pub async fn verify_and_store_credential(
         return Err(anyhow::anyhow!("challenge 不匹配"));
     }
 
-    // 验证 origin（生产环境需要严格校验）
+    // 验证 origin（严格匹配）
     let origin = client_value["origin"].as_str().unwrap_or("");
-    if !origin.starts_with("http://localhost") && !origin.starts_with("https://") {
-        return Err(anyhow::anyhow!("origin 不合法"));
+    let expected_origin = get_expected_origin();
+    if origin != expected_origin {
+        return Err(anyhow::anyhow!("origin 不匹配: 期望 {}, 实际 {}", expected_origin, origin));
     }
 
     // 2. 解码 attestation_object，提取公钥
@@ -245,7 +261,7 @@ pub async fn verify_authentication(
     // 验证 rpIdHash
     use sha2::{Sha256, Digest};
     let mut hasher = Sha256::new();
-    hasher.update(RP_ID.as_bytes());
+    hasher.update(get_rp_id().as_bytes());
     let expected_hash = hasher.finalize();
     if &auth_data[0..32] != expected_hash.as_slice() {
         return Err(anyhow::anyhow!("rpIdHash 不匹配"));

@@ -35,9 +35,10 @@ pub async fn register_start(
 
     let challenge = crate::passkey::generate_challenge();
 
-    // 存储 challenge 到 session（简化：存到 settings 表）
+    // 存储 challenge（带时间戳，5分钟过期）
+    let challenge_data = format!("{}:{}", chrono::Utc::now().timestamp(), challenge);
     sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('passkey_reg_challenge', ?)")
-        .bind(&challenge)
+        .bind(&challenge_data)
         .execute(&state.db)
         .await
         .ok();
@@ -49,7 +50,7 @@ pub async fn register_start(
         "ok": true,
         "challenge": challenge,
         "rp": {
-            "id": crate::passkey::RP_ID,
+            "id": crate::passkey::get_rp_id(),
             "name": crate::passkey::RP_NAME,
         },
         "user": {
@@ -72,13 +73,18 @@ pub async fn register_finish(
         None => return Json(json!({"ok": false, "error": "未登录"})),
     };
 
-    // 获取存储的 challenge
-    let challenge: String = sqlx::query_scalar(
+    // 获取存储的 challenge（检查过期）
+    let challenge_raw: String = sqlx::query_scalar(
         "SELECT value FROM settings WHERE key = 'passkey_reg_challenge'"
     )
     .fetch_one(&state.db)
     .await
     .unwrap_or_default();
+
+    let challenge = match validate_challenge_ttl(&challenge_raw) {
+        Some(c) => c,
+        None => return Json(json!({"ok": false, "error": "挑战已过期，请重新注册"})),
+    };
 
     // 解析响应
     let reg_resp: crate::passkey::RegistrationResponse = match serde_json::from_value(resp) {
@@ -106,9 +112,10 @@ pub async fn login_start(
 ) -> Json<Value> {
     let challenge = crate::passkey::generate_challenge();
 
-    // 存储 challenge
+    // 存储 challenge（带时间戳）
+    let challenge_data = format!("{}:{}", chrono::Utc::now().timestamp(), challenge);
     sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('passkey_auth_challenge', ?)")
-        .bind(&challenge)
+        .bind(&challenge_data)
         .execute(&state.db)
         .await
         .ok();
@@ -123,7 +130,7 @@ pub async fn login_start(
     Json(json!({
         "ok": true,
         "challenge": challenge,
-        "rpId": crate::passkey::RP_ID,
+        "rpId": crate::passkey::get_rp_id(),
         "allowCredentials": allow_creds,
     }))
 }
@@ -131,17 +138,30 @@ pub async fn login_start(
 /// Passkey 登录：验证签名
 pub async fn login_finish(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<PasskeyLoginFinishRequest>,
 ) -> (CookieJar, Json<Value>) {
     let jar = CookieJar::new();
 
-    // 获取存储的 challenge
-    let challenge: String = sqlx::query_scalar(
+    // 提取客户端 IP
+    let client_ip = headers.get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()).map(|s| s.to_string()));
+
+    // 获取存储的 challenge（检查过期）
+    let challenge_raw: String = sqlx::query_scalar(
         "SELECT value FROM settings WHERE key = 'passkey_auth_challenge'"
     )
     .fetch_one(&state.db)
     .await
     .unwrap_or_default();
+
+    let challenge = match validate_challenge_ttl(&challenge_raw) {
+        Some(c) => c,
+        None => return (jar, Json(json!({"ok": false, "error": "挑战已过期，请重新登录"}))),
+    };
 
     // 解析响应
     let auth_resp: crate::passkey::AuthenticationResponse = match serde_json::from_value(body.credential) {
@@ -158,11 +178,9 @@ pub async fn login_finish(
                 .ok();
 
             // 创建 session
-            match crate::auth::create_session(&state.db, user_id, true).await {
+            match crate::auth::create_session(&state.db, user_id, true, client_ip.as_deref()).await {
                 Ok(token) => {
-                    let cookie = axum_extra::extract::cookie::Cookie::parse_encoded(
-                        format!("session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400", token)
-                    ).unwrap();
+                    let cookie = crate::auth::build_session_cookie(&token, state.tls_enabled);
                     let jar = jar.add(cookie);
                     (jar, Json(json!({"ok": true, "message": "Passkey 登录成功"})))
                 }
@@ -210,4 +228,19 @@ async fn get_user_id(state: &AppState, jar: &CookieJar) -> Option<i64> {
         .fetch_optional(&state.db)
         .await
         .unwrap_or(None)
+}
+
+/// 验证 challenge TTL（格式：timestamp:challenge，5分钟过期）
+fn validate_challenge_ttl(raw: &str) -> Option<String> {
+    let parts: Vec<&str> = raw.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let timestamp: i64 = parts[0].parse().ok()?;
+    let challenge = parts[1].to_string();
+    let now = chrono::Utc::now().timestamp();
+    if now - timestamp > 300 {
+        return None; // 过期
+    }
+    Some(challenge)
 }

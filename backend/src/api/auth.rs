@@ -1,9 +1,27 @@
-use axum::{extract::State, Json};
+use axum::{extract::{State, ConnectInfo}, http::HeaderMap, Json};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use crate::AppState;
+
+/// 从请求头提取客户端 IP
+fn extract_ip(headers: &HeaderMap) -> Option<String> {
+    if let Some(xff) = headers.get("x-forwarded-for") {
+        if let Ok(val) = xff.to_str() {
+            if let Some(first) = val.split(',').next() {
+                let ip = first.trim().to_string();
+                if !ip.is_empty() { return Some(ip); }
+            }
+        }
+    }
+    if let Some(xri) = headers.get("x-real-ip") {
+        if let Ok(val) = xri.to_str() {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
@@ -41,25 +59,24 @@ pub async fn check_auth(State(state): State<Arc<AppState>>) -> Json<Value> {
 }
 
 /// 首次运行 Setup
-pub async fn setup(State(state): State<Arc<AppState>>, Json(body): Json<SetupRequest>) -> (CookieJar, Json<Value>) {
+pub async fn setup(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SetupRequest>,
+) -> (CookieJar, Json<Value>) {
     let jar = CookieJar::new();
 
     if crate::auth::is_initialized(&state.db).await {
         return (jar, Json(json!({"ok": false, "error": "管理员已存在，请直接登录"})));
     }
 
-    if body.password.len() < 8 {
-        return (jar, Json(json!({"ok": false, "error": "密码至少8位"})));
-    }
+    let client_ip = extract_ip(&headers);
 
     match crate::auth::setup_admin(&state.db, &body.username, &body.password, body.enable_totp.unwrap_or(false)).await {
         Ok((user_id, totp_secret)) => {
-            // 自动登录
-            match crate::auth::create_session(&state.db, user_id, true).await {
+            match crate::auth::create_session(&state.db, user_id, true, client_ip.as_deref()).await {
                 Ok(token) => {
-                    let cookie = axum_extra::extract::cookie::Cookie::parse_encoded(
-                        format!("session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400", token)
-                    ).unwrap();
+                    let cookie = crate::auth::build_session_cookie(&token, state.tls_enabled);
                     let jar = jar.add(cookie);
 
                     let mut resp = json!({"ok": true, "message": "设置完成"});
@@ -77,15 +94,31 @@ pub async fn setup(State(state): State<Arc<AppState>>, Json(body): Json<SetupReq
     }
 }
 
-/// 登录
-pub async fn login(State(state): State<Arc<AppState>>, Json(body): Json<LoginRequest>) -> (CookieJar, Json<Value>) {
+/// 登录（带速率限制）
+pub async fn login(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<LoginRequest>,
+) -> (CookieJar, Json<Value>) {
     let jar = CookieJar::new();
+    let client_ip = extract_ip(&headers);
 
-    match crate::auth::login(&state.db, &body.username, &body.password).await {
+    // 速率限制检查
+    let rate_key = format!("login:{}", body.username);
+    if !state.login_limiter.check(&rate_key).await {
+        let remaining = state.login_limiter.remaining_secs(&rate_key).await;
+        return (jar, Json(json!({
+            "ok": false,
+            "error": format!("登录尝试次数过多，请 {} 秒后重试", remaining)
+        })));
+    }
+
+    match crate::auth::login(&state.db, &body.username, &body.password, client_ip.as_deref()).await {
         Ok((token, needs_mfa, _totp_secret)) => {
-            let cookie = axum_extra::extract::cookie::Cookie::parse_encoded(
-                format!("session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400", token)
-            ).unwrap();
+            // 登录成功，清除限制
+            state.login_limiter.clear(&rate_key).await;
+
+            let cookie = crate::auth::build_session_cookie(&token, state.tls_enabled);
             let jar = jar.add(cookie);
 
             if needs_mfa {
@@ -94,7 +127,11 @@ pub async fn login(State(state): State<Arc<AppState>>, Json(body): Json<LoginReq
                 (jar, Json(json!({"ok": true, "needs_mfa": false, "message": "登录成功"})))
             }
         }
-        Err(e) => (jar, Json(json!({"ok": false, "error": e.to_string()}))),
+        Err(e) => {
+            // 登录失败，记录
+            state.login_limiter.record_failure(&rate_key).await;
+            (jar, Json(json!({"ok": false, "error": e.to_string()})))
+        }
     }
 }
 
@@ -159,7 +196,7 @@ pub async fn change_password(
     }
 }
 
-/// 重置 TOTP（先验证密码，返回新密钥）
+/// 重置 TOTP
 pub async fn reset_totp(
     State(state): State<Arc<AppState>>,
     jar: CookieJar,
@@ -183,7 +220,6 @@ pub async fn reset_totp(
         None => return Json(json!({"ok": false, "error": "会话无效"})),
     };
 
-    // 验证密码
     let password_hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
         .bind(user_id)
         .fetch_optional(&state.db)
@@ -199,7 +235,6 @@ pub async fn reset_totp(
         None => return Json(json!({"ok": false, "error": "用户不存在"})),
     }
 
-    // 生成新 TOTP 密钥
     let secret = crate::totp::generate_secret();
     let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = ?")
         .bind(user_id)
@@ -207,7 +242,6 @@ pub async fn reset_totp(
         .await
         .unwrap_or_default();
 
-    // 保存新密钥（暂不启用，等验证通过后启用）
     sqlx::query("UPDATE users SET totp_secret = ? WHERE id = ?")
         .bind(&secret)
         .bind(user_id)
@@ -249,7 +283,6 @@ pub async fn disable_totp(
         None => return Json(json!({"ok": false, "error": "会话无效"})),
     };
 
-    // 验证密码
     let password_hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
         .bind(user_id)
         .fetch_optional(&state.db)

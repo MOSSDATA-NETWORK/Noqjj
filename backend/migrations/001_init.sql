@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     token TEXT NOT NULL UNIQUE,
+    ip TEXT,
+    user_agent TEXT,
     expires_at DATETIME NOT NULL,
     mfa_verified INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP

@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use crate::AppState;
 
-/// 检查是否已初始化（是否有管理员账户）
+/// 检查是否已初始化
 pub async fn is_initialized(pool: &SqlitePool) -> bool {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
@@ -28,6 +28,10 @@ pub async fn setup_admin(
 ) -> anyhow::Result<(i64, Option<String>)> {
     if is_initialized(pool).await {
         return Err(anyhow::anyhow!("管理员已存在"));
+    }
+
+    if password.len() < 8 {
+        return Err(anyhow::anyhow!("密码至少8位"));
     }
 
     let hash = crate::crypto::hash_password(password);
@@ -50,14 +54,24 @@ pub async fn setup_admin(
     Ok((id, totp_secret))
 }
 
-/// 保存 Passkey 凭据
-pub async fn save_passkey(pool: &SqlitePool, user_id: i64, credential_json: &str) -> anyhow::Result<()> {
-    sqlx::query("UPDATE users SET passkey_credential = ? WHERE id = ?")
-        .bind(credential_json)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+/// 获取客户端 IP（支持 X-Forwarded-For）
+fn get_client_ip(request: &Request) -> String {
+    // 优先从 X-Forwarded-For 获取（反代场景）
+    if let Some(xff) = request.headers().get("x-forwarded-for") {
+        if let Ok(val) = xff.to_str() {
+            if let Some(first) = val.split(',').next() {
+                return first.trim().to_string();
+            }
+        }
+    }
+    // X-Real-IP
+    if let Some(xri) = request.headers().get("x-real-ip") {
+        if let Ok(val) = xri.to_str() {
+            return val.to_string();
+        }
+    }
+    // 连接地址（axum 0.8 不直接提供，用 header 兜底）
+    "unknown".to_string()
 }
 
 /// 认证中间件
@@ -73,7 +87,8 @@ pub async fn auth_middleware(
     if path.starts_with("/api/auth/login")
         || path.starts_with("/api/auth/check")
         || path.starts_with("/api/auth/setup")
-        || path.starts_with("/api/auth/passkey/")
+        || path.starts_with("/api/passkey/login/")
+        || path.starts_with("/api/passkey/has")
     {
         return next.run(request).await;
     }
@@ -83,13 +98,16 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // 检查 session
+    // 检查 session（验证 token + IP + 过期时间）
     if let Some(cookie) = jar.get("session") {
         let token = cookie.value();
+        let client_ip = get_client_ip(&request);
+
         let valid: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sessions WHERE token = ? AND expires_at > datetime('now')"
+            "SELECT COUNT(*) FROM sessions WHERE token = ? AND expires_at > datetime('now') AND ip = ?"
         )
         .bind(token)
+        .bind(&client_ip)
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
@@ -107,14 +125,23 @@ pub async fn auth_middleware(
         .unwrap()
 }
 
+/// 构建 session cookie
+pub fn build_session_cookie(token: &str, tls_enabled: bool) -> axum_extra::extract::cookie::Cookie<'static> {
+    let secure_flag = if tls_enabled { "; Secure" } else { "" };
+    axum_extra::extract::cookie::Cookie::parse_encoded(
+        format!("session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400{}", token, secure_flag)
+    ).unwrap()
+}
+
 /// 创建 session
-pub async fn create_session(pool: &SqlitePool, user_id: i64, mfa_verified: bool) -> anyhow::Result<String> {
+pub async fn create_session(pool: &SqlitePool, user_id: i64, mfa_verified: bool, ip: Option<&str>) -> anyhow::Result<String> {
     let token = crate::crypto::generate_token();
     let expires = chrono::Utc::now().naive_utc() + chrono::Duration::hours(24);
 
-    sqlx::query("INSERT INTO sessions (user_id, token, expires_at, mfa_verified) VALUES (?, ?, ?, ?)")
+    sqlx::query("INSERT INTO sessions (user_id, token, ip, expires_at, mfa_verified) VALUES (?, ?, ?, ?, ?)")
         .bind(user_id)
         .bind(&token)
+        .bind(ip)
         .bind(expires)
         .bind(mfa_verified)
         .execute(pool)
@@ -130,8 +157,8 @@ pub async fn cleanup_sessions(pool: &SqlitePool) {
         .await;
 }
 
-/// 登录（第一步：密码验证）
-pub async fn login(pool: &SqlitePool, username: &str, password: &str) -> anyhow::Result<(String, bool, Option<String>)> {
+/// 登录（统一错误消息，不泄露用户是否存在）
+pub async fn login(pool: &SqlitePool, username: &str, password: &str, ip: Option<&str>) -> anyhow::Result<(String, bool, Option<String>)> {
     let user = sqlx::query_as::<_, (i64, String, String, Option<String>, Option<String>)>(
         "SELECT id, username, password_hash, totp_secret, passkey_credential FROM users WHERE username = ?"
     )
@@ -139,19 +166,22 @@ pub async fn login(pool: &SqlitePool, username: &str, password: &str) -> anyhow:
     .fetch_optional(pool)
     .await?;
 
-    let (user_id, _, hash, totp_secret, passkey_cred) = user.ok_or_else(|| anyhow::anyhow!("用户不存在"))?;
+    // 统一错误消息：不区分"用户不存在"和"密码错误"
+    let (user_id, _, hash, totp_secret, passkey_cred) = match user {
+        Some(u) => u,
+        None => return Err(anyhow::anyhow!("用户名或密码错误")),
+    };
 
     if !crate::crypto::verify_password(password, &hash) {
-        return Err(anyhow::anyhow!("密码错误"));
+        return Err(anyhow::anyhow!("用户名或密码错误"));
     }
 
     let has_totp = totp_secret.is_some();
     let has_passkey = passkey_cred.is_some();
     let needs_mfa = has_totp || has_passkey;
 
-    // 如果没有2FA，直接创建已验证 session
     let mfa_verified = !needs_mfa;
-    let token = create_session(pool, user_id, mfa_verified).await?;
+    let token = create_session(pool, user_id, mfa_verified, ip).await?;
 
     Ok((token, needs_mfa, totp_secret))
 }
@@ -187,8 +217,12 @@ pub async fn verify_totp(pool: &SqlitePool, session_token: &str, code: &str) -> 
     }
 }
 
-/// 修改密码
+/// 修改密码（加长度校验）
 pub async fn change_password(pool: &SqlitePool, user_id: i64, old_password: &str, new_password: &str) -> anyhow::Result<()> {
+    if new_password.len() < 8 {
+        return Err(anyhow::anyhow!("新密码至少8位"));
+    }
+
     let (_, _, hash): (i64, String, String) = sqlx::query_as(
         "SELECT id, username, password_hash FROM users WHERE id = ?"
     )
@@ -207,7 +241,7 @@ pub async fn change_password(pool: &SqlitePool, user_id: i64, old_password: &str
         .execute(pool)
         .await?;
 
-    // 清除该用户所有 session
+    // 清除该用户所有 session（强制重新登录）
     sqlx::query("DELETE FROM sessions WHERE user_id = ?")
         .bind(user_id)
         .execute(pool)

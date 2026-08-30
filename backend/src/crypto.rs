@@ -1,36 +1,11 @@
-/// 密钥管理：自动生成并存储在 SQLite settings 表
-/// PVE 密码等敏感数据用 AES-256-GCM 加密
+/// 加密模块：AES-256-GCM + Argon2
+/// 密钥从 main.rs 的环境变量或自动生成，不存储在数据库中
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand::RngCore;
-use sqlx::SqlitePool;
-
-/// 获取或生成加密密钥（存储在 settings 表）
-pub async fn get_or_create_master_key(pool: &SqlitePool) -> anyhow::Result<Vec<u8>> {
-    let existing: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM settings WHERE key = 'master_key'"
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    match existing {
-        Some(hex) => hex_to_bytes(&hex).map_err(|_| anyhow::anyhow!("密钥格式错误")),
-        None => {
-            let mut key = [0u8; 32];
-            OsRng.fill_bytes(&mut key);
-            let hex = bytes_to_hex(&key);
-            sqlx::query("INSERT INTO settings (key, value) VALUES ('master_key', ?)")
-                .bind(&hex)
-                .execute(pool)
-                .await?;
-            tracing::info!("已生成新的加密密钥");
-            Ok(key.to_vec())
-        }
-    }
-}
 
 /// 加密
 pub fn encrypt(plaintext: &str, master_key: &[u8]) -> String {
@@ -85,18 +60,4 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
     argon2::Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok()
-}
-
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-fn hex_to_bytes(hex: &str) -> anyhow::Result<Vec<u8>> {
-    if hex.len() % 2 != 0 {
-        return Err(anyhow::anyhow!("hex 长度必须为偶数"));
-    }
-    Ok((0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
-        .collect::<Result<Vec<_>, _>>()?)
 }
