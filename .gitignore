@@ -1,0 +1,28 @@
+# Rust
+backend/target/
+backend/Cargo.lock
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Built static files
+backend/static/assets/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
