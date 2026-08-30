@@ -24,5 +24,4 @@ base64 = "0.22"
 axum-extra = { version = "0.10", features = ["cookie"] }
 tower = "0.5"
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
-webauthn-rs = "0.3"
 url = "2"
