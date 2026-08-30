@@ -132,6 +132,73 @@ systemctl stop noqjj      # 停止
 journalctl -u noqjj -f    # 查看日志
 ```
 
+### HTTPS 配置
+
+**本系统处理密码、SSH 私钥等敏感数据，强烈建议强制 HTTPS。**
+
+**方案一：Nginx 反代 + Let's Encrypt（推荐）**
+
+```bash
+# 1. 安装 nginx 和 certbot
+apt install nginx certbot python3-certbot-nginx
+
+# 2. 申请证书
+certbot --nginx -d noqjj.example.com
+
+# 3. 复制 nginx 配置
+cp deploy/nginx.conf /etc/nginx/sites-available/noqjj
+# 编辑修改 server_name 为你的域名
+vi /etc/nginx/sites-available/noqjj
+ln -s /etc/nginx/sites-available/noqjj /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+
+# 4. 修改 Noqjj 只监听 localhost（可选，更安全）
+# 编辑 systemd 服务，添加 Environment=HOST=127.0.0.1
+systemctl edit noqjj
+# 添加:
+# [Service]
+# Environment=HOST=127.0.0.1
+systemctl restart noqjj
+```
+
+**方案二：内置 TLS（无需 nginx）**
+
+```bash
+# 1. 准备证书（Let's Encrypt 或自签名）
+certbot certonly --standalone -d noqjj.example.com
+
+# 2. 配置环境变量
+systemctl edit noqjj
+# 添加:
+# [Service]
+# Environment=TLS_CERT=/etc/letsencrypt/live/noqjj.example.com/fullchain.pem
+# Environment=TLS_KEY=/etc/letsencrypt/live/noqjj.example.com/privkey.pem
+
+# 3. 重启
+systemctl restart noqjj
+```
+
+**方案三：自签名证书（测试用）**
+
+```bash
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes \
+  -subj "/CN=noqjj"
+
+# 启动
+TLS_CERT=cert.pem TLS_KEY=key.pem ./noqjj
+```
+
+**环境变量汇总**
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `3210` | HTTP/HTTPS 端口 |
+| `HOST` | `0.0.0.0` | 监听地址（nginx 反代时设 `127.0.0.1`） |
+| `DATABASE_URL` | `sqlite:noqjj.db?mode=rwc` | 数据库路径 |
+| `STATIC_DIR` | `static` | 前端静态文件目录 |
+| `TLS_CERT` | (空) | TLS 证书路径，设置后启用 HTTPS |
+| `TLS_KEY` | (空) | TLS 私钥路径，设置后启用 HTTPS |
+
 ### 使用流程
 
 ```
@@ -305,9 +372,38 @@ Passkey supported sources:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3210` | HTTP port |
+| `PORT` | `3210` | HTTP/HTTPS port |
+| `HOST` | `0.0.0.0` | Listen address (set `127.0.0.1` for nginx reverse proxy) |
 | `DATABASE_URL` | `sqlite:noqjj.db?mode=rwc` | Database path |
 | `STATIC_DIR` | `static` | Frontend static files directory |
+| `TLS_CERT` | (empty) | TLS cert path, enables HTTPS when set |
+| `TLS_KEY` | (empty) | TLS key path, enables HTTPS when set |
+
+### HTTPS Setup
+
+**This system handles passwords, SSH keys, and other sensitive data. HTTPS is strongly recommended.**
+
+**Option 1: Nginx reverse proxy + Let's Encrypt (Recommended)**
+
+```bash
+apt install nginx certbot python3-certbot-nginx
+certbot --nginx -d noqjj.example.com
+cp deploy/nginx.conf /etc/nginx/sites-available/noqjj
+# Edit server_name to your domain
+ln -s /etc/nginx/sites-available/noqjj /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+```
+
+**Option 2: Built-in TLS (No nginx needed)**
+
+```bash
+systemctl edit noqjj
+# Add:
+# [Service]
+# Environment=TLS_CERT=/etc/letsencrypt/live/noqjj.example.com/fullchain.pem
+# Environment=TLS_KEY=/etc/letsencrypt/live/noqjj.example.com/privkey.pem
+systemctl restart noqjj
+```
 
 ---
 
