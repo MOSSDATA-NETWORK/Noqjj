@@ -112,6 +112,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set git identity
+        run: |
+          git config user.name "Mossdata"
+          git config user.email "mossdata@users.noreply.github.com"
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -125,4 +129,4 @@ jobs:
             artifacts/noqjj-linux-aarch64/noqjj-linux-aarch64
             artifacts/noqjj-macos-aarch64/noqjj-macos-aarch64
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
