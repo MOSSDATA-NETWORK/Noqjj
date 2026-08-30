@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { notificationsApi, versionApi } from '../api'
+import { notificationsApi, versionApi, passkeyApi } from '../api'
+import { registerPasskey, isWebAuthnSupported } from '../passkey'
 import axios from 'axios'
 
 const router = useRouter()
@@ -37,10 +38,15 @@ const totpSecret = ref('')
 const totpUri = ref('')
 const totpCode = ref('')
 const totpStep = ref(1) // 1=confirm, 2=show secret, 3=verify code
+const passkeySupported = ref(false)
+const passkeyLoading = ref(false)
+const passkeyRegistered = ref(false)
 
 onMounted(async () => {
   loadNotifications()
   loadVersion()
+  passkeySupported.value = isWebAuthnSupported()
+  checkPasskeyStatus()
 })
 
 async function loadVersion() {
@@ -255,6 +261,67 @@ async function doDisableTotp() {
 function logout() {
   axios.post('/api/auth/logout').finally(() => router.push('/login'))
 }
+
+// Passkey
+async function checkPasskeyStatus() {
+  try {
+    const res = await passkeyApi.hasPasskey('')
+    if (res.ok) passkeyRegistered.value = res.has_passkey
+  } catch {}
+}
+
+async function registerPasskeyAction() {
+  passkeyLoading.value = true
+  try {
+    // 1. 获取注册挑战
+    const startRes = await passkeyApi.registerStart()
+    if (!startRes.ok) {
+      alert(startRes.error)
+      return
+    }
+
+    // 2. 调用浏览器 WebAuthn API
+    const credential = await registerPasskey({
+      challenge: startRes.challenge,
+      rp: startRes.rp,
+      user: startRes.user,
+      excludeCredentials: startRes.excludeCredentials,
+    })
+
+    // 3. 发送到服务器验证
+    const finishRes = await passkeyApi.registerFinish(credential)
+    if (finishRes.ok) {
+      alert('Passkey 注册成功！')
+      passkeyRegistered.value = true
+    } else {
+      alert(finishRes.error || '注册失败')
+    }
+  } catch (e: any) {
+    if (e.name === 'NotAllowedError') {
+      alert('用户取消了 Passkey 注册')
+    } else {
+      alert(e.message || '注册失败')
+    }
+  } finally {
+    passkeyLoading.value = false
+  }
+}
+
+async function deletePasskey() {
+  if (!confirm('确定删除 Passkey？删除后将无法使用 Passkey 登录。')) return
+  passkeyLoading.value = true
+  try {
+    const res = await passkeyApi.delete()
+    if (res.ok) {
+      alert('Passkey 已删除')
+      passkeyRegistered.value = false
+    } else {
+      alert(res.error)
+    }
+  } finally {
+    passkeyLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -294,13 +361,25 @@ function logout() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-left:auto;color:var(--text-tertiary)"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
 
-        <div class="settings-item" style="opacity:0.5;cursor:default;">
+        <div v-if="passkeySupported" class="settings-item" @click="passkeyRegistered ? deletePasskey() : registerPasskeyAction()">
+          <div class="settings-item-icon" style="background: rgba(52,199,89,0.1); color: var(--green);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          </div>
+          <div style="flex: 1;">
+            <div class="settings-item-title">Passkey</div>
+            <div class="settings-item-desc">{{ passkeyRegistered ? '已注册，点击管理' : '使用指纹或面容快速登录' }}</div>
+          </div>
+          <span v-if="passkeyRegistered" class="badge badge-online">已注册</span>
+          <span v-else-if="passkeyLoading" class="spinner" style="width:16px;height:16px;border-width:2px;"></span>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="color:var(--text-tertiary)"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div v-else class="settings-item" style="opacity:0.5;cursor:default;">
           <div class="settings-item-icon" style="background: rgba(52,199,89,0.1); color: var(--green);">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
           </div>
           <div>
             <div class="settings-item-title">Passkey</div>
-            <div class="settings-item-desc">即将支持</div>
+            <div class="settings-item-desc">浏览器不支持 WebAuthn</div>
           </div>
         </div>
 

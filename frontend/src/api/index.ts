@@ -42,3 +42,12 @@ export const authApi = {
   resetTotp: (password: string) => api.post('/auth/reset-totp', { password }).then(r => r.data),
   disableTotp: (password: string) => api.post('/auth/disable-totp', { password }).then(r => r.data),
 }
+
+export const passkeyApi = {
+  hasPasskey: (username: string) => api.post('/passkey/has', { username }).then(r => r.data),
+  loginStart: (username: string) => api.post('/passkey/login/start', { username }).then(r => r.data),
+  loginFinish: (username: string, credential: any) => api.post('/passkey/login/finish', { username, credential }).then(r => r.data),
+  registerStart: () => api.post('/passkey/register/start').then(r => r.data),
+  registerFinish: (credential: any) => api.post('/passkey/register/finish', credential).then(r => r.data),
+  delete: () => api.post('/passkey/delete').then(r => r.data),
+}

@@ -415,6 +415,31 @@ code {
 .update-banner:hover { background: rgba(0,122,255,0.15); }
 .version-text { font-size: 12px; color: var(--text-tertiary); }
 
+/* Settings Grid */
+.settings-grid { display: flex; flex-direction: column; gap: 8px; }
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: 1px solid var(--border);
+}
+.settings-item:hover { background: rgba(0,0,0,0.03); }
+.settings-item-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.settings-item-title { font-size: 14px; font-weight: 600; }
+.settings-item-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
 /* Changelog */
 .changelog-entry {
   padding: 16px 0;

@@ -2,6 +2,8 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { passkeyApi } from '../api'
+import { authenticateWithPasskey, isWebAuthnSupported } from '../passkey'
 
 const router = useRouter()
 const username = ref('')
@@ -10,6 +12,7 @@ const totpCode = ref('')
 const loading = ref(false)
 const error = ref('')
 const needsMfa = ref(false)
+const passkeySupported = ref(false)
 
 onMounted(async () => {
   try {
@@ -18,6 +21,8 @@ onMounted(async () => {
       router.push('/setup')
     }
   } catch {}
+
+  passkeySupported.value = isWebAuthnSupported()
 })
 
 async function doLogin() {
@@ -65,6 +70,63 @@ async function verifyTotp() {
     loading.value = false
   }
 }
+
+async function checkPasskey() {
+  if (!username.value) {
+    error.value = '请先输入用户名'
+    return
+  }
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await passkeyApi.hasPasskey(username.value)
+    if (res.ok && res.has_passkey) {
+      await doPasskeyLogin()
+    } else {
+      error.value = '该用户未注册 Passkey'
+    }
+  } catch (e: any) {
+    error.value = e.response?.data?.error || '检查失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function doPasskeyLogin() {
+  loading.value = true
+  error.value = ''
+  try {
+    // 1. 获取挑战
+    const startRes = await passkeyApi.loginStart(username.value)
+    if (!startRes.ok) {
+      error.value = startRes.error
+      return
+    }
+
+    // 2. 调用浏览器 WebAuthn API
+    const credential = await authenticateWithPasskey({
+      challenge: startRes.challenge,
+      rpId: startRes.rpId,
+      allowCredentials: startRes.allowCredentials,
+    })
+
+    // 3. 发送到服务器验证
+    const finishRes = await passkeyApi.loginFinish(username.value, credential)
+    if (finishRes.ok) {
+      router.push('/')
+    } else {
+      error.value = finishRes.error || 'Passkey 认证失败'
+    }
+  } catch (e: any) {
+    if (e.name === 'NotAllowedError') {
+      error.value = '用户取消了 Passkey 认证'
+    } else {
+      error.value = e.message || 'Passkey 认证失败'
+    }
+  } finally {
+    loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -76,7 +138,7 @@ async function verifyTotp() {
           <path d="M9 12l2 2 4-4"/>
         </svg>
       </div>
-      <h1 class="login-title">Chicken Detect</h1>
+      <h1 class="login-title">Noqjj</h1>
       <p class="login-subtitle">PVE 切鸡检测平台</p>
 
       <!-- 密码登录 -->
@@ -88,6 +150,32 @@ async function verifyTotp() {
         <div class="form-group">
           <label class="form-label">密码</label>
           <input class="form-input" type="password" v-model="password" placeholder="请输入密码" @keyup.enter="doLogin" />
+        </div>
+
+        <div v-if="error" style="color: var(--red); font-size: 14px; margin-bottom: 16px;">{{ error }}</div>
+
+        <button class="btn btn-primary" style="width: 100%; margin-bottom: 12px;" @click="doLogin" :disabled="loading">
+          {{ loading ? '登录中...' : '登录' }}
+        </button>
+
+        <!-- Passkey 登录 -->
+        <div v-if="passkeySupported" style="text-align: center;">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+            <div style="flex: 1; height: 1px; background: var(--border);"></div>
+            <span style="font-size: 12px; color: var(--text-tertiary);">或</span>
+            <div style="flex: 1; height: 1px; background: var(--border);"></div>
+          </div>
+          <button class="btn btn-secondary" style="width: 100%;" @click="checkPasskey" :disabled="loading || !username">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/>
+              <polyline points="10 17 15 12 10 7"/>
+              <line x1="15" y1="12" x2="3" y2="12"/>
+            </svg>
+            使用 Passkey 登录
+          </button>
+          <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 8px;">
+            需要先输入用户名，然后使用指纹或面容验证
+          </p>
         </div>
       </template>
 
@@ -102,19 +190,16 @@ async function verifyTotp() {
             style="text-align: center; font-size: 24px; letter-spacing: 8px; font-family: monospace;"
             @keyup.enter="verifyTotp" />
         </div>
+
+        <div v-if="error" style="color: var(--red); font-size: 14px; margin-bottom: 16px;">{{ error }}</div>
+
         <button class="btn btn-primary" style="width: 100%; margin-bottom: 12px;" @click="verifyTotp" :disabled="loading">
-          验证
+          {{ loading ? '验证中...' : '验证' }}
         </button>
-        <button class="btn btn-secondary" style="width: 100%;" @click="needsMfa = false; totpCode = ''">
+        <button class="btn btn-secondary" style="width: 100%;" @click="needsMfa = false; totpCode = ''; error = ''">
           返回
         </button>
       </template>
-
-      <div v-if="error" style="color: var(--red); font-size: 14px; margin: 12px 0;">{{ error }}</div>
-
-      <button v-if="!needsMfa" class="btn btn-primary" style="width: 100%;" @click="doLogin" :disabled="loading">
-        {{ loading ? '登录中...' : '登录' }}
-      </button>
     </div>
   </div>
 </template>

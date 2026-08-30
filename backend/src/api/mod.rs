@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod hosts;
 pub mod notifications;
+pub mod passkey;
 pub mod results;
 pub mod scans;
 pub mod version;
@@ -17,6 +18,9 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/verify-totp", post(auth::verify_totp))
         .route("/auth/logout", post(auth::logout))
+        .route("/passkey/login/start", post(passkey::login_start))
+        .route("/passkey/login/finish", post(passkey::login_finish))
+        .route("/passkey/has", post(passkey::has_passkey))
         .route("/version", get(version::current))
         .with_state(state.clone());
 
@@ -36,6 +40,9 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/auth/password", post(auth::change_password))
         .route("/auth/reset-totp", post(auth::reset_totp))
         .route("/auth/disable-totp", post(auth::disable_totp))
+        .route("/passkey/register/start", post(passkey::register_start))
+        .route("/passkey/register/finish", post(passkey::register_finish))
+        .route("/passkey/delete", post(passkey::delete))
         .route("/version/check", get(version::check))
         .route("/version/changelog", get(version::changelog))
         .route("/version/update", post(version::update))
