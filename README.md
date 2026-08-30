@@ -60,26 +60,76 @@
 
 ### 快速开始
 
-**方式一：下载预编译二进制（推荐）**
+**方式一：下载预编译二进制 + 一键部署（推荐）**
 
 ```bash
 # 下载（以 Linux x86_64 为例）
-wget https://github.com/MOSSDATA-NETWORK/Noqjj/releases/download/v0.3.0/noqjj-linux-x86_64
-chmod +x noqjj-linux-x86_64
+wget https://github.com/MOSSDATA-NETWORK/Noqjj/releases/download/v0.3.0/noqjj-linux-x86_64 -O noqjj
+chmod +x noqjj
 
-# 运行
-./noqjj-linux-x86_64
+# 下载部署脚本
+wget https://raw.githubusercontent.com/MOSSDATA-NETWORK/Noqjj/main/deploy/install.sh
 
-# 浏览器访问 http://你的服务器IP:3210
+# 一键部署（默认端口 3210）
+bash install.sh
+
+# 或指定端口
+bash install.sh 8080
 ```
 
-**方式二：从源码编译**
+部署脚本会自动：
+- 复制文件到 `/opt/noqjj/`
+- 创建 systemd 服务
+- 启用开机自启
+- 启动服务
+
+**方式二：手动部署**
+
+```bash
+# 下载二进制
+wget https://github.com/MOSSDATA-NETWORK/Noqjj/releases/download/v0.3.0/noqjj-linux-x86_64 -O /opt/noqjj/noqjj
+chmod +x /opt/noqjj/noqjj
+
+# 创建 systemd 服务
+cat > /etc/systemd/system/noqjj.service << 'EOF'
+[Unit]
+Description=Noqjj — PVE 切鸡检测平台
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/noqjj
+ExecStart=/opt/noqjj/noqjj
+Restart=on-failure
+RestartSec=5
+Environment=PORT=3210
+Environment=STATIC_DIR=/opt/noqjj/static
+Environment=DATABASE_URL=sqlite:/opt/noqjj/noqjj.db?mode=rwc
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now noqjj
+```
+
+**方式三：从源码编译**
 
 ```bash
 git clone https://github.com/MOSSDATA-NETWORK/Noqjj.git
 cd Noqjj/frontend && npm install && npm run build && cd ../backend
 cargo build --release
 # 产物：backend/target/release/chicken-detect-backend
+```
+
+**常用命令**
+
+```bash
+systemctl status noqjj    # 查看状态
+systemctl restart noqjj   # 重启
+systemctl stop noqjj      # 停止
+journalctl -u noqjj -f    # 查看日志
 ```
 
 ### 使用流程
