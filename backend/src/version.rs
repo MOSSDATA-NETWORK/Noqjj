@@ -125,6 +125,8 @@ pub async fn perform_update() -> anyhow::Result<String> {
         "noqjj-linux-aarch64"
     } else if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         "noqjj-macos-aarch64"
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
+        "noqjj-macos-x86_64"
     } else {
         return Err(anyhow::anyhow!("当前平台不支持自动更新"));
     };
