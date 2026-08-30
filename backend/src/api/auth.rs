@@ -29,6 +29,11 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
+#[derive(Deserialize)]
+pub struct PasswordRequest {
+    pub password: String,
+}
+
 /// 检查是否已初始化
 pub async fn check_auth(State(state): State<Arc<AppState>>) -> Json<Value> {
     let initialized = crate::auth::is_initialized(&state.db).await;
@@ -152,4 +157,119 @@ pub async fn change_password(
         Ok(_) => Json(json!({"ok": true, "message": "密码已修改，请重新登录"})),
         Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
     }
+}
+
+/// 重置 TOTP（先验证密码，返回新密钥）
+pub async fn reset_totp(
+    State(state): State<Arc<AppState>>,
+    jar: CookieJar,
+    Json(body): Json<PasswordRequest>,
+) -> Json<Value> {
+    let token = match jar.get("session") {
+        Some(c) => c.value().to_string(),
+        None => return Json(json!({"ok": false, "error": "未登录"})),
+    };
+
+    let user_id: Option<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM sessions WHERE token = ? AND expires_at > datetime('now')"
+    )
+    .bind(&token)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    let user_id = match user_id {
+        Some(id) => id,
+        None => return Json(json!({"ok": false, "error": "会话无效"})),
+    };
+
+    // 验证密码
+    let password_hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    match password_hash {
+        Some(hash) => {
+            if !crate::crypto::verify_password(&body.password, &hash) {
+                return Json(json!({"ok": false, "error": "密码错误"}));
+            }
+        }
+        None => return Json(json!({"ok": false, "error": "用户不存在"})),
+    }
+
+    // 生成新 TOTP 密钥
+    let secret = crate::totp::generate_secret();
+    let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or_default();
+
+    // 保存新密钥（暂不启用，等验证通过后启用）
+    sqlx::query("UPDATE users SET totp_secret = ? WHERE id = ?")
+        .bind(&secret)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .ok();
+
+    let uri = crate::totp::get_otpauth_uri(&username, &secret);
+
+    Json(json!({
+        "ok": true,
+        "totp_secret": secret,
+        "totp_uri": uri,
+        "message": "请扫描二维码并输入验证码完成绑定"
+    }))
+}
+
+/// 禁用 TOTP
+pub async fn disable_totp(
+    State(state): State<Arc<AppState>>,
+    jar: CookieJar,
+    Json(body): Json<PasswordRequest>,
+) -> Json<Value> {
+    let token = match jar.get("session") {
+        Some(c) => c.value().to_string(),
+        None => return Json(json!({"ok": false, "error": "未登录"})),
+    };
+
+    let user_id: Option<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM sessions WHERE token = ? AND expires_at > datetime('now')"
+    )
+    .bind(&token)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    let user_id = match user_id {
+        Some(id) => id,
+        None => return Json(json!({"ok": false, "error": "会话无效"})),
+    };
+
+    // 验证密码
+    let password_hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    match password_hash {
+        Some(hash) => {
+            if !crate::crypto::verify_password(&body.password, &hash) {
+                return Json(json!({"ok": false, "error": "密码错误"}));
+            }
+        }
+        None => return Json(json!({"ok": false, "error": "用户不存在"})),
+    }
+
+    sqlx::query("UPDATE users SET totp_secret = NULL WHERE id = ?")
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .ok();
+
+    Json(json!({"ok": true, "message": "TOTP 已禁用"}))
 }

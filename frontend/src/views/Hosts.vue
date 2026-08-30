@@ -162,6 +162,16 @@ function authTypeLabel(t: string) {
             <label class="form-label">IP 地址</label>
             <input class="form-input" v-model="form.host" placeholder="78.105.182.253" />
           </div>
+
+          <div class="form-group">
+            <label class="form-label">接入方式</label>
+            <select class="form-input" v-model="form.auth_type">
+              <option value="password">SSH 密码</option>
+              <option value="ssh_key">SSH 私钥</option>
+              <option value="api_token">PVE API Token</option>
+            </select>
+          </div>
+
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
             <div class="form-group">
               <label class="form-label">SSH 端口</label>
@@ -171,15 +181,6 @@ function authTypeLabel(t: string) {
               <label class="form-label">用户名</label>
               <input class="form-input" v-model="form.username" />
             </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">接入方式</label>
-            <select class="form-input" v-model="form.auth_type">
-              <option value="password">SSH 密码</option>
-              <option value="ssh_key">SSH 私钥</option>
-              <option value="api_token">PVE API Token</option>
-            </select>
           </div>
 
           <div v-if="form.auth_type === 'password'" class="form-group">

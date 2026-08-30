@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { notificationsApi, versionApi } from '../api'
+import axios from 'axios'
 
+const router = useRouter()
 const notifications = ref<any[]>([])
 const loading = ref(true)
 const showModal = ref(false)
 const editItem = ref<any>(null)
 const testing = ref(false)
+const notifyType = ref('telegram')
 
 // Version
 const currentVersion = ref('')
@@ -21,6 +25,18 @@ const tgForm = ref({ bot_token: '', chat_id: '' })
 // WeCom form
 const wcForm = ref({ webhook: '' })
 const notifyLevel = ref('detected_and_cleaned')
+
+// Account settings
+const showPasswordModal = ref(false)
+const passwordForm = ref({ old_password: '', new_password: '', confirm_password: '' })
+const passwordLoading = ref(false)
+const showTotpModal = ref(false)
+const totpPassword = ref('')
+const totpLoading = ref(false)
+const totpSecret = ref('')
+const totpUri = ref('')
+const totpCode = ref('')
+const totpStep = ref(1) // 1=confirm, 2=show secret, 3=verify code
 
 onMounted(async () => {
   loadNotifications()
@@ -78,8 +94,9 @@ async function loadNotifications() {
   }
 }
 
-function openAdd(_type: string) {
+function openAdd(type?: string) {
   editItem.value = null
+  notifyType.value = type || 'telegram'
   tgForm.value = { bot_token: '', chat_id: '' }
   wcForm.value = { webhook: '' }
   notifyLevel.value = 'detected_and_cleaned'
@@ -88,6 +105,7 @@ function openAdd(_type: string) {
 
 function openEdit(n: any) {
   editItem.value = n
+  notifyType.value = n.type
   try {
     const config = JSON.parse(n.config)
     if (n.type === 'telegram') {
@@ -101,7 +119,7 @@ function openEdit(n: any) {
 }
 
 async function saveNotification() {
-  const type = editItem.value?.type || (tgForm.value.bot_token ? 'telegram' : 'wecom')
+  const type = editItem.value?.type || notifyType.value
   const config = type === 'telegram' ? JSON.stringify(tgForm.value) : JSON.stringify(wcForm.value)
   const data = { type, enabled: true, config, notify_level: notifyLevel.value }
   if (editItem.value) {
@@ -135,15 +153,166 @@ function formatDate(d: string) {
   if (!d) return ''
   return new Date(d).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
+
+// Account: Change Password
+function openChangePassword() {
+  passwordForm.value = { old_password: '', new_password: '', confirm_password: '' }
+  showPasswordModal.value = true
+}
+
+async function doChangePassword() {
+  if (passwordForm.value.new_password.length < 8) {
+    alert('新密码至少8位')
+    return
+  }
+  if (passwordForm.value.new_password !== passwordForm.value.confirm_password) {
+    alert('两次密码不一致')
+    return
+  }
+  passwordLoading.value = true
+  try {
+    const res = await axios.post('/api/auth/password', {
+      old_password: passwordForm.value.old_password,
+      new_password: passwordForm.value.new_password,
+    })
+    if (res.data.ok) {
+      alert('密码已修改，请重新登录')
+      showPasswordModal.value = false
+      router.push('/login')
+    } else {
+      alert(res.data.error)
+    }
+  } catch (e: any) {
+    alert(e.response?.data?.error || '修改失败')
+  } finally {
+    passwordLoading.value = false
+  }
+}
+
+// Account: Reset TOTP
+function openResetTotp() {
+  totpPassword.value = ''
+  totpSecret.value = ''
+  totpUri.value = ''
+  totpCode.value = ''
+  totpStep.value = 1
+  showTotpModal.value = true
+}
+
+async function doResetTotpStep1() {
+  totpLoading.value = true
+  try {
+    const res = await axios.post('/api/auth/reset-totp', { password: totpPassword.value })
+    if (res.data.ok) {
+      totpSecret.value = res.data.totp_secret
+      totpUri.value = res.data.totp_uri
+      totpStep.value = 2
+    } else {
+      alert(res.data.error)
+    }
+  } catch (e: any) {
+    alert(e.response?.data?.error || '操作失败')
+  } finally {
+    totpLoading.value = false
+  }
+}
+
+async function doResetTotpStep3() {
+  totpLoading.value = true
+  try {
+    const res = await axios.post('/api/auth/verify-totp', { code: totpCode.value })
+    if (res.data.ok) {
+      alert('TOTP 已重新绑定')
+      showTotpModal.value = false
+    } else {
+      alert(res.data.error)
+    }
+  } catch (e: any) {
+    alert(e.response?.data?.error || '验证失败')
+  } finally {
+    totpLoading.value = false
+  }
+}
+
+async function doDisableTotp() {
+  if (!confirm('确定禁用 TOTP？禁用后登录将不再需要二次验证。')) return
+  totpLoading.value = true
+  try {
+    const res = await axios.post('/api/auth/disable-totp', { password: totpPassword.value })
+    if (res.data.ok) {
+      alert('TOTP 已禁用')
+      showTotpModal.value = false
+    } else {
+      alert(res.data.error)
+    }
+  } catch (e: any) {
+    alert(e.response?.data?.error || '操作失败')
+  } finally {
+    totpLoading.value = false
+  }
+}
+
+function logout() {
+  axios.post('/api/auth/logout').finally(() => router.push('/login'))
+}
 </script>
 
 <template>
   <div>
-    <!-- Version & Update Section -->
     <div class="page-header">
       <div>
         <h1 class="page-title">设置</h1>
-        <p class="page-subtitle">系统设置与更新</p>
+        <p class="page-subtitle">系统设置与账户管理</p>
+      </div>
+    </div>
+
+    <!-- Account Settings -->
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="card-header">
+        <h3>账户设置</h3>
+      </div>
+      <div class="settings-grid">
+        <div class="settings-item" @click="openChangePassword">
+          <div class="settings-item-icon" style="background: rgba(0,122,255,0.1); color: var(--accent);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+          </div>
+          <div>
+            <div class="settings-item-title">修改密码</div>
+            <div class="settings-item-desc">更改登录密码</div>
+          </div>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-left:auto;color:var(--text-tertiary)"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+
+        <div class="settings-item" @click="openResetTotp">
+          <div class="settings-item-icon" style="background: rgba(175,82,222,0.1); color: var(--purple);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          </div>
+          <div>
+            <div class="settings-item-title">TOTP 身份验证器</div>
+            <div class="settings-item-desc">重新绑定或禁用二次验证</div>
+          </div>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-left:auto;color:var(--text-tertiary)"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+
+        <div class="settings-item" style="opacity:0.5;cursor:default;">
+          <div class="settings-item-icon" style="background: rgba(52,199,89,0.1); color: var(--green);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          </div>
+          <div>
+            <div class="settings-item-title">Passkey</div>
+            <div class="settings-item-desc">即将支持</div>
+          </div>
+        </div>
+
+        <div class="settings-item" @click="logout" style="border: 1px solid rgba(255,59,48,0.2);">
+          <div class="settings-item-icon" style="background: rgba(255,59,48,0.1); color: var(--red);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </div>
+          <div>
+            <div class="settings-item-title" style="color:var(--red)">退出登录</div>
+            <div class="settings-item-desc">退出当前账户</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -176,13 +345,10 @@ function formatDate(d: string) {
         </div>
       </div>
 
-      <!-- Update Info -->
       <div v-if="updateInfo?.update_available" style="margin-top: 16px; padding: 16px; background: rgba(0,122,255,0.05); border-radius: 12px;">
         <div style="font-weight: 600; margin-bottom: 8px;">v{{ updateInfo.latest }} 更新内容</div>
         <div style="font-size: 14px; color: var(--text-secondary); white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ updateInfo.release_notes || '暂无更新说明' }}</div>
-        <a v-if="updateInfo.release_url" :href="updateInfo.release_url" target="_blank" style="display: inline-block; margin-top: 8px; font-size: 13px; color: var(--accent);">
-          在 GitHub 查看 →
-        </a>
+        <a v-if="updateInfo.release_url" :href="updateInfo.release_url" target="_blank" style="display: inline-block; margin-top: 8px; font-size: 13px; color: var(--accent);">在 GitHub 查看 →</a>
       </div>
     </div>
 
@@ -191,9 +357,7 @@ function formatDate(d: string) {
       <div class="modal" style="max-width: 600px;">
         <div class="modal-header">更新日志</div>
         <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
-          <div v-if="changelog.length === 0" style="text-align: center; padding: 20px; color: var(--text-secondary);">
-            暂无更新日志
-          </div>
+          <div v-if="changelog.length === 0" style="text-align: center; padding: 20px; color: var(--text-secondary);">暂无更新日志</div>
           <div v-for="(entry, i) in changelog" :key="i" class="changelog-entry">
             <div class="changelog-header">
               <span class="changelog-version">{{ entry.name }}</span>
@@ -216,7 +380,7 @@ function formatDate(d: string) {
         <button class="btn btn-secondary" @click="testNotifications" :disabled="testing">
           {{ testing ? '发送中...' : '测试通知' }}
         </button>
-        <button class="btn btn-primary" @click="openAdd('telegram')">+ 添加通知</button>
+        <button class="btn btn-primary" @click="openAdd()">+ 添加通知</button>
       </div>
     </div>
 
@@ -249,12 +413,22 @@ function formatDate(d: string) {
       </div>
     </div>
 
-    <!-- Add/Edit Modal -->
+    <!-- Notification Modal -->
     <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
       <div class="modal">
         <div class="modal-header">{{ editItem ? '编辑通知' : '添加通知' }}</div>
         <div class="modal-body">
-          <template v-if="!editItem || editItem.type === 'telegram'">
+          <!-- Type selector for new notifications -->
+          <div v-if="!editItem" class="form-group">
+            <label class="form-label">通知类型</label>
+            <div style="display: flex; gap: 12px;">
+              <button :class="['btn', notifyType === 'telegram' ? 'btn-primary' : 'btn-secondary']" @click="notifyType = 'telegram'">📱 Telegram</button>
+              <button :class="['btn', notifyType === 'wecom' ? 'btn-primary' : 'btn-secondary']" @click="notifyType = 'wecom'">💬 企业微信</button>
+            </div>
+          </div>
+
+          <!-- Telegram fields -->
+          <template v-if="notifyType === 'telegram'">
             <div class="form-group">
               <label class="form-label">Telegram Bot Token</label>
               <input class="form-input" v-model="tgForm.bot_token" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
@@ -264,12 +438,15 @@ function formatDate(d: string) {
               <input class="form-input" v-model="tgForm.chat_id" placeholder="123456789" />
             </div>
           </template>
-          <template v-if="editItem && editItem.type === 'wecom'">
+
+          <!-- WeCom fields -->
+          <template v-if="notifyType === 'wecom'">
             <div class="form-group">
               <label class="form-label">企业微信 Webhook URL</label>
               <input class="form-input" v-model="wcForm.webhook" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." />
             </div>
           </template>
+
           <div class="form-group">
             <label class="form-label">通知级别</label>
             <select class="form-input" v-model="notifyLevel">
@@ -285,41 +462,121 @@ function formatDate(d: string) {
         </div>
       </div>
     </div>
+
+    <!-- Change Password Modal -->
+    <div v-if="showPasswordModal" class="modal-overlay" @click.self="showPasswordModal = false">
+      <div class="modal">
+        <div class="modal-header">修改密码</div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">当前密码</label>
+            <input class="form-input" type="password" v-model="passwordForm.old_password" placeholder="请输入当前密码" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">新密码</label>
+            <input class="form-input" type="password" v-model="passwordForm.new_password" placeholder="至少8位" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">确认新密码</label>
+            <input class="form-input" type="password" v-model="passwordForm.confirm_password" placeholder="再次输入新密码" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="showPasswordModal = false">取消</button>
+          <button class="btn btn-primary" @click="doChangePassword" :disabled="passwordLoading">
+            {{ passwordLoading ? '修改中...' : '确认修改' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOTP Modal -->
+    <div v-if="showTotpModal" class="modal-overlay" @click.self="showTotpModal = false">
+      <div class="modal">
+        <div class="modal-header">TOTP 身份验证器</div>
+        <div class="modal-body">
+          <!-- Step 1: Password confirmation -->
+          <template v-if="totpStep === 1">
+            <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">请输入密码以验证身份</p>
+            <div class="form-group">
+              <label class="form-label">密码</label>
+              <input class="form-input" type="password" v-model="totpPassword" placeholder="请输入登录密码" @keyup.enter="doResetTotpStep1" />
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+              <button class="btn btn-danger" @click="doDisableTotp" :disabled="totpLoading">禁用 TOTP</button>
+              <button class="btn btn-primary" @click="doResetTotpStep1" :disabled="totpLoading">
+                {{ totpLoading ? '验证中...' : '重新绑定' }}
+              </button>
+            </div>
+          </template>
+
+          <!-- Step 2: Show new TOTP secret -->
+          <template v-if="totpStep === 2">
+            <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">请使用身份验证器 App 扫描二维码</p>
+            <div style="text-align: center; margin: 16px 0;">
+              <div style="background: white; display: inline-block; padding: 16px; border-radius: 12px;">
+                <img :src="'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(totpUri)" alt="TOTP QR Code" width="200" height="200" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">密钥（手动输入）</label>
+              <input class="form-input" :value="totpSecret" readonly style="font-family: monospace; text-align: center;" />
+            </div>
+            <button class="btn btn-primary" style="width: 100%;" @click="totpStep = 3">已绑定，下一步</button>
+          </template>
+
+          <!-- Step 3: Verify code -->
+          <template v-if="totpStep === 3">
+            <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">请输入验证器中显示的6位验证码</p>
+            <div class="form-group">
+              <input class="form-input" v-model="totpCode" placeholder="000000" maxlength="6"
+                style="text-align: center; font-size: 24px; letter-spacing: 8px; font-family: monospace;"
+                @keyup.enter="doResetTotpStep3" />
+            </div>
+            <button class="btn btn-primary" style="width: 100%;" @click="doResetTotpStep3" :disabled="totpLoading">
+              {{ totpLoading ? '验证中...' : '验证并完成' }}
+            </button>
+          </template>
+        </div>
+        <div class="modal-footer" v-if="totpStep === 1">
+          <button class="btn btn-secondary" @click="showTotpModal = false">取消</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.changelog-entry {
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border);
-}
+.changelog-entry { padding: 16px 0; border-bottom: 1px solid var(--border); }
 .changelog-entry:last-child { border-bottom: none; }
-.changelog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.changelog-version {
-  font-size: 16px;
-  font-weight: 600;
-}
-.changelog-date {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-.changelog-notes {
-  font-size: 14px;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  max-height: 150px;
-  overflow-y: auto;
-  margin-bottom: 8px;
-}
-.changelog-link {
-  font-size: 13px;
-  color: var(--accent);
-  text-decoration: none;
-}
+.changelog-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.changelog-version { font-size: 16px; font-weight: 600; }
+.changelog-date { font-size: 13px; color: var(--text-secondary); }
+.changelog-notes { font-size: 14px; color: var(--text-secondary); white-space: pre-wrap; max-height: 150px; overflow-y: auto; margin-bottom: 8px; }
+.changelog-link { font-size: 13px; color: var(--accent); text-decoration: none; }
 .changelog-link:hover { text-decoration: underline; }
+
+.settings-grid { display: flex; flex-direction: column; gap: 8px; }
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: 1px solid var(--border);
+}
+.settings-item:hover { background: rgba(0,0,0,0.03); }
+.settings-item-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.settings-item-title { font-size: 14px; font-weight: 600; }
+.settings-item-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 </style>

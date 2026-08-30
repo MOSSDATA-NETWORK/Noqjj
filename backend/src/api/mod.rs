@@ -34,6 +34,8 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/notifications/{id}", put(notifications::update))
         .route("/notifications/test", post(notifications::test))
         .route("/auth/password", post(auth::change_password))
+        .route("/auth/reset-totp", post(auth::reset_totp))
+        .route("/auth/disable-totp", post(auth::disable_totp))
         .route("/version/check", get(version::check))
         .route("/version/changelog", get(version::changelog))
         .route("/version/update", post(version::update))
