@@ -3,6 +3,7 @@
   <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/Vue.js-35495E?style=for-the-badge&logo=vuedotjs&logoColor=4FC08D" alt="Vue.js">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/Version-0.3.0-green?style=for-the-badge" alt="Version">
 </p>
 
 <h1 align="center">Noqjj — 禁止切鸡鸡</h1>
@@ -16,8 +17,8 @@
   <a href="#中文">中文</a> •
   <a href="#english">English</a> •
   <a href="#快速开始">快速开始</a> •
-  <a href="#部署">部署</a> •
-  <a href="#api">API</a>
+  <a href="#api">API</a> •
+  <a href="#screenshots">截图</a>
 </p>
 
 ---
@@ -30,9 +31,10 @@
 
 - 🔍 **自动检测** — 扫描 PVE 宿主机上的所有 VM，识别是否安装了切鸡软件
 - 🚀 **自动部署** — 添加 PVE 主机后，自动上传检测脚本，无需手动操作
-- 🔐 **安全认证** — 支持密码 + TOTP 身份验证器，数据 AES-256-GCM 加密
-- 🔑 **多种接入** — SSH 密码 / SSH Key / PVE API Token
+- 🔐 **多种认证** — 密码 + TOTP 身份验证器 + Passkey（指纹/面容/安全密钥）
+- 🔑 **灵活接入** — SSH 密码 / SSH 私钥（拖拽上传） / PVE API Token
 - 📱 **实时告警** — Telegram + 企业微信，新发现或已清除即时通知
+- 🔄 **在线更新** — 自动检查新版本，一键更新
 - 🎨 **Apple Design** — 简洁优雅的 UI
 
 ### 什么是"切鸡"
@@ -58,58 +60,76 @@
 
 ### 快速开始
 
+**方式一：下载预编译二进制（推荐）**
+
 ```bash
-# 1. 克隆
+# 下载（以 Linux x86_64 为例）
+wget https://github.com/MOSSDATA-NETWORK/Noqjj/releases/download/v0.3.0/noqjj-linux-x86_64
+chmod +x noqjj-linux-x86_64
+
+# 运行
+./noqjj-linux-x86_64
+
+# 浏览器访问 http://你的服务器IP:3210
+```
+
+**方式二：从源码编译**
+
+```bash
 git clone https://github.com/MOSSDATA-NETWORK/Noqjj.git
-cd Noqjj
-
-# 2. 编译前端
-cd frontend && npm install && npm run build && cd ..
-
-# 3. 编译后端
-cd backend && cargo build --release && cd ..
-
-# 4. 部署
-scp backend/target/release/chicken-detect-backend 你的服务器:/opt/noqjj/
-scp -r backend/static 你的服务器:/opt/noqjj/
-
-# 5. 运行
-ssh 你的服务器
-cd /opt/noqjj
-chmod +x chicken-detect-backend
-./chicken-detect-backend
-
-# 6. 浏览器访问 http://你的服务器IP:3210
+cd Noqjj/frontend && npm install && npm run build && cd ../backend
+cargo build --release
+# 产物：backend/target/release/chicken-detect-backend
 ```
 
 ### 使用流程
 
 ```
-首次访问 → /setup 设置管理员账户（支持 TOTP）
+首次访问 → /setup 设置管理员（用户名 + 密码 + TOTP 可选）
     ↓
-  控制台 → 添加 PVE 主机（选择接入方式）
+  登录 → 密码登录 或 Passkey 直接登录
     ↓
-  自动部署 → 检测脚本上传到 PVE
+  控制台 → 添加 PVE 主机
+    ├─ 输入名称、IP
+    ├─ 选择接入方式（密码 / 私钥拖拽上传 / API Token）
+    └─ 自动部署检测脚本
     ↓
   扫描 → 查看结果 → 配置通知 → 定时巡检
 ```
+
+### 登录方式
+
+| 方式 | 说明 |
+|------|------|
+| **密码登录** | 用户名 + 密码，可选 TOTP 二次验证 |
+| **Passkey 登录** | 指纹、面容、安全密钥，无需输入密码 |
+
+Passkey 支持的来源：
+- 🍎 iCloud 钥匙串
+- 🔵 Google Password Manager
+- 🔒 Bitwarden
+- 🔐 1Password
+- 🔑 YubiKey 等硬件安全密钥
+- 📱 设备指纹 / 面容
 
 ### PVE 接入方式
 
 | 方式 | 说明 | 适用场景 |
 |------|------|---------|
 | SSH 密码 | 最常用 | 默认方式 |
-| SSH Key | 私钥登录 | 已配置密钥的环境 |
+| SSH 私钥 | 拖拽文件或粘贴内容，加密存储 | 已配置密钥的环境 |
 | PVE API Token | `user@pve!tokenid=secret` | PVE 集群管理 |
 
 ### 安全设计
 
 | 特性 | 实现 |
 |------|------|
-| 登录认证 | Cookie session，首次运行强制设置 |
-| TOTP 2FA | Google Authenticator / Authy |
+| 登录认证 | Cookie session + Passkey (WebAuthn) |
+| TOTP 2FA | Google Authenticator / Authy 等 |
+| Passkey | WebAuthn FIDO2，支持 iCloud/Google/Bitwarden |
 | 密码存储 | Argon2 哈希（不可逆） |
-| 数据加密 | AES-256-GCM，密钥自动管理 |
+| 凭据加密 | AES-256-GCM，密钥自动管理 |
+| SSH 私钥 | 加密存储，临时文件用完即删 |
 | API 鉴权 | 中间件拦截，未登录返回 401 |
 
 ### 环境变量
@@ -130,9 +150,10 @@ chmod +x chicken-detect-backend
 
 - 🔍 **Auto-detect** — Scan all VMs on PVE hosts to identify chicken-cutting software
 - 🚀 **Auto-deploy** — Upload detection scripts to PVE hosts automatically after adding them
-- 🔐 **Secure Auth** — Password + TOTP authenticator, AES-256-GCM encryption
-- 🔑 **Multiple Auth** — SSH password / SSH Key / PVE API Token
+- 🔐 **Multi-auth** — Password + TOTP authenticator + Passkey (fingerprint/face/security key)
+- 🔑 **Flexible Access** — SSH password / SSH key (drag & drop upload) / PVE API Token
 - 📱 **Real-time Alerts** — Telegram + WeChat notifications
+- 🔄 **Online Update** — Auto-check new versions, one-click update
 - 🎨 **Apple Design** — Clean and elegant UI
 
 ### What is "Chicken-Cutting"
@@ -158,58 +179,76 @@ chmod +x chicken-detect-backend
 
 ### Quick Start
 
+**Option 1: Download pre-built binary (Recommended)**
+
 ```bash
-# 1. Clone
+# Download (Linux x86_64 example)
+wget https://github.com/MOSSDATA-NETWORK/Noqjj/releases/download/v0.3.0/noqjj-linux-x86_64
+chmod +x noqjj-linux-x86_64
+
+# Run
+./noqjj-linux-x86_64
+
+# Open browser http://your-server-ip:3210
+```
+
+**Option 2: Build from source**
+
+```bash
 git clone https://github.com/MOSSDATA-NETWORK/Noqjj.git
-cd Noqjj
-
-# 2. Build frontend
-cd frontend && npm install && npm run build && cd ..
-
-# 3. Build backend
-cd backend && cargo build --release && cd ..
-
-# 4. Deploy
-scp backend/target/release/chicken-detect-backend your-server:/opt/noqjj/
-scp -r backend/static your-server:/opt/noqjj/
-
-# 5. Run
-ssh your-server
-cd /opt/noqjj
-chmod +x chicken-detect-backend
-./chicken-detect-backend
-
-# 6. Open browser http://your-server-ip:3210
+cd Noqjj/frontend && npm install && npm run build && cd ../backend
+cargo build --release
+# Output: backend/target/release/chicken-detect-backend
 ```
 
 ### Workflow
 
 ```
-First visit → /setup to create admin account (TOTP supported)
+First visit → /setup to create admin (username + password + TOTP optional)
     ↓
-  Dashboard → Add PVE host (choose auth method)
+  Login → Password login or Passkey direct login
     ↓
-  Auto-deploy → Detection script uploaded to PVE
+  Dashboard → Add PVE host
+    ├─ Enter name, IP
+    ├─ Choose auth method (password / key drag & drop / API Token)
+    └─ Auto-deploy detection script
     ↓
   Scan → View results → Configure alerts → Scheduled scans
 ```
+
+### Login Methods
+
+| Method | Description |
+|--------|-------------|
+| **Password** | Username + password, optional TOTP 2FA |
+| **Passkey** | Fingerprint, face, security key — no password needed |
+
+Passkey supported sources:
+- 🍎 iCloud Keychain
+- 🔵 Google Password Manager
+- 🔒 Bitwarden
+- 🔐 1Password
+- 🔑 YubiKey and other hardware security keys
+- 📱 Device fingerprint / face
 
 ### PVE Auth Methods
 
 | Method | Description | Use Case |
 |--------|-------------|----------|
 | SSH Password | Most common | Default |
-| SSH Key | Private key login | Environments with key configured |
+| SSH Key | Drag & drop file or paste content, encrypted storage | Environments with key configured |
 | PVE API Token | `user@pve!tokenid=secret` | PVE cluster management |
 
 ### Security Design
 
 | Feature | Implementation |
 |---------|----------------|
-| Authentication | Cookie session, mandatory on first run |
-| TOTP 2FA | Google Authenticator / Authy |
+| Authentication | Cookie session + Passkey (WebAuthn) |
+| TOTP 2FA | Google Authenticator / Authy etc. |
+| Passkey | WebAuthn FIDO2, supports iCloud/Google/Bitwarden |
 | Password Storage | Argon2 hash (irreversible) |
-| Data Encryption | AES-256-GCM, auto key management |
+| Credential Encryption | AES-256-GCM, auto key management |
+| SSH Key | Encrypted storage, temp file deleted after use |
 | API Auth | Middleware intercept, 401 if not logged in |
 
 ### Environment Variables
@@ -228,12 +267,20 @@ First visit → /setup to create admin account (TOTP supported)
 # Public
 GET    /api/auth/check           # Check if initialized
 POST   /api/auth/setup           # First-time setup
-POST   /api/auth/login           # Login
+POST   /api/auth/login           # Login (password)
 POST   /api/auth/verify-totp     # Verify TOTP
 POST   /api/auth/logout          # Logout
+POST   /api/passkey/has          # Check if user has Passkey
+POST   /api/passkey/login/start  # Passkey login: get challenge
+POST   /api/passkey/login/finish # Passkey login: verify
 
 # Authenticated
 POST   /api/auth/password        # Change password
+POST   /api/auth/reset-totp      # Reset TOTP (re-bind)
+POST   /api/auth/disable-totp    # Disable TOTP
+POST   /api/passkey/register/start  # Passkey register: get challenge
+POST   /api/passkey/register/finish # Passkey register: verify & store
+POST   /api/passkey/delete          # Delete Passkey
 GET    /api/hosts                # List hosts
 POST   /api/hosts                # Add host (auto-deploys script)
 PUT    /api/hosts/:id            # Update host
@@ -248,6 +295,10 @@ GET    /api/notifications       # Notification config
 POST   /api/notifications       # Add notification
 PUT    /api/notifications/:id   # Update notification
 POST   /api/notifications/test  # Test notification
+GET    /api/version             # Current version
+GET    /api/version/check       # Check for updates
+GET    /api/version/changelog   # Changelog
+POST   /api/version/update      # Perform update
 ```
 
 ---
@@ -260,7 +311,7 @@ POST   /api/notifications/test  # Test notification
 | Frontend | Vue 3 + Vite |
 | UI Style | Apple Design |
 | Encryption | AES-256-GCM |
-| Auth | Argon2 + TOTP |
+| Auth | Argon2 + TOTP + Passkey (WebAuthn FIDO2) |
 | Deploy | Single binary (embedded frontend) |
 
 ## Architecture
@@ -268,14 +319,21 @@ POST   /api/notifications/test  # Test notification
 ```
 ┌─────────────┐     HTTPS     ┌─────────────┐     SSH      ┌─────────────┐
 │   Browser    │ ◄───────────► │   Platform   │ ◄───────────► │  PVE Hosts   │
-│ Apple Design │  Cookie+TOTP  │  Rust + Vue  │  Auto-deploy  │  (unlimited) │
-└─────────────┘              └──────┬──────┘              └─────────────┘
+│ Apple Design │ Cookie+Passkey│  Rust + Vue  │  Auto-deploy  │  (unlimited) │
+└─────────────┘    +TOTP       └──────┬──────┘              └─────────────┘
                                    │
                             ┌──────┴──────┐
                             │  SQLite DB   │
                             │  AES-256-GCM │
                             └─────────────┘
 ```
+
+## Releases
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| v0.3.0 | 2026-08-31 | Passkey 登录、SSH 私钥拖拽上传、账户设置 |
+| v0.2.0 | 2026-08-30 | TOTP、自动部署、多接入方式、Apple Design |
 
 ## License
 
