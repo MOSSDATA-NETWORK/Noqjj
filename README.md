@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/Vue.js-35495E?style=for-the-badge&logo=vuedotjs&logoColor=4FC08D" alt="Vue.js">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License">
-  <img src="https://img.shields.io/badge/Version-0.3.0-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.4.0-green?style=for-the-badge" alt="Version">
 </p>
 
 <h1 align="center">Noqjj — 禁止切鸡鸡</h1>
@@ -478,6 +478,7 @@ POST   /api/version/update      # Perform update
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.4.0 | 2026-08-31 | HTTPS 支持、Nginx 反代教程、部署脚本 |
 | v0.3.0 | 2026-08-31 | Passkey 登录、SSH 私钥拖拽上传、账户设置 |
 | v0.2.0 | 2026-08-30 | TOTP、自动部署、多接入方式、Apple Design |
 
