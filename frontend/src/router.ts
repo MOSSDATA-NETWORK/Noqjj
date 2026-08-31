@@ -4,13 +4,22 @@ import axios from 'axios'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    // 不带侧边栏的页面
     { path: '/setup', name: 'setup', component: () => import('./views/Setup.vue') },
     { path: '/login', name: 'login', component: () => import('./views/Login.vue') },
-    { path: '/', name: 'dashboard', component: () => import('./views/Dashboard.vue') },
-    { path: '/hosts', name: 'hosts', component: () => import('./views/Hosts.vue') },
-    { path: '/scans', name: 'scans', component: () => import('./views/Scans.vue') },
-    { path: '/results', name: 'results', component: () => import('./views/Results.vue') },
-    { path: '/settings', name: 'settings', component: () => import('./views/Settings.vue') },
+
+    // 带侧边栏的页面
+    {
+      path: '/',
+      component: () => import('./views/Layout.vue'),
+      children: [
+        { path: '', name: 'dashboard', component: () => import('./views/Dashboard.vue') },
+        { path: 'hosts', name: 'hosts', component: () => import('./views/Hosts.vue') },
+        { path: 'scans', name: 'scans', component: () => import('./views/Scans.vue') },
+        { path: 'results', name: 'results', component: () => import('./views/Results.vue') },
+        { path: 'settings', name: 'settings', component: () => import('./views/Settings.vue') },
+      ]
+    },
   ]
 })
 

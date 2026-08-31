@@ -71,33 +71,12 @@ async function verifyTotp() {
   }
 }
 
-async function checkPasskey() {
-  if (!username.value) {
-    error.value = '请先输入用户名'
-    return
-  }
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await passkeyApi.hasPasskey(username.value)
-    if (res.ok && res.has_passkey) {
-      await doPasskeyLogin()
-    } else {
-      error.value = '该用户未注册 Passkey'
-    }
-  } catch (e: any) {
-    error.value = e.response?.data?.error || '检查失败'
-  } finally {
-    loading.value = false
-  }
-}
-
 async function doPasskeyLogin() {
   loading.value = true
   error.value = ''
   try {
-    // 1. 获取挑战
-    const startRes = await passkeyApi.loginStart(username.value)
+    // 1. 获取挑战（不传用户名，使用 discoverable credentials）
+    const startRes = await passkeyApi.loginStart('')
     if (!startRes.ok) {
       error.value = startRes.error
       return
@@ -111,7 +90,7 @@ async function doPasskeyLogin() {
     })
 
     // 3. 发送到服务器验证
-    const finishRes = await passkeyApi.loginFinish(username.value, credential)
+    const finishRes = await passkeyApi.loginFinish('', credential)
     if (finishRes.ok) {
       router.push('/')
     } else {
@@ -165,7 +144,7 @@ async function doPasskeyLogin() {
             <span style="font-size: 12px; color: var(--text-tertiary);">或</span>
             <div style="flex: 1; height: 1px; background: var(--border);"></div>
           </div>
-          <button class="btn btn-secondary" style="width: 100%;" @click="checkPasskey" :disabled="loading || !username">
+          <button class="btn btn-secondary" style="width: 100%;" @click="doPasskeyLogin" :disabled="loading">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
               <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/>
               <polyline points="10 17 15 12 10 7"/>
@@ -174,7 +153,7 @@ async function doPasskeyLogin() {
             使用 Passkey 登录
           </button>
           <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 8px;">
-            需要先输入用户名，然后使用指纹或面容验证
+            使用指纹、面容或安全密钥直接登录
           </p>
         </div>
       </template>

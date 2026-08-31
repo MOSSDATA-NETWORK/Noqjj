@@ -83,28 +83,26 @@ pub async fn auth_middleware(
 ) -> Response {
     let path = request.uri().path().to_string();
 
-    // 公开路由
-    if path.starts_with("/api/auth/login")
-        || path.starts_with("/api/auth/check")
-        || path.starts_with("/api/auth/setup")
-        || path.starts_with("/api/passkey/login/")
-        || path.starts_with("/api/passkey/has")
+    // 公开路由（路径已剥离 /api 前缀）
+    if path.starts_with("/auth/login")
+        || path.starts_with("/auth/check")
+        || path.starts_with("/auth/setup")
+        || path.starts_with("/auth/verify-totp")
+        || path.starts_with("/auth/logout")
+        || path.starts_with("/passkey/login/")
+        || path.starts_with("/passkey/has")
+        || path.starts_with("/version")
     {
         return next.run(request).await;
     }
 
-    // 静态文件
-    if !path.starts_with("/api/") {
-        return next.run(request).await;
-    }
-
-    // 检查 session（验证 token + IP + 过期时间）
+    // 检查 session（验证 token + IP + 过期时间 + MFA 已完成）
     if let Some(cookie) = jar.get("session") {
         let token = cookie.value();
         let client_ip = get_client_ip(&request);
 
         let valid: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sessions WHERE token = ? AND expires_at > datetime('now') AND ip = ?"
+            "SELECT COUNT(*) FROM sessions WHERE token = ? AND expires_at > datetime('now') AND ip = ? AND mfa_verified = 1"
         )
         .bind(token)
         .bind(&client_ip)

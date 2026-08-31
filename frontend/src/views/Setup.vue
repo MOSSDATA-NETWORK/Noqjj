@@ -2,17 +2,19 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { passkeyApi } from '../api'
+import { registerPasskey, isWebAuthnSupported } from '../passkey'
 
 const router = useRouter()
-const step = ref(1) // 1=基础设置, 2=TOTP设置, 3=完成
+const step = ref(1) // 1=创建账户, 2=Passkey注册, 3=完成
 const username = ref('admin')
 const password = ref('')
 const confirmPassword = ref('')
-const enableTotp = ref(false)
 const loading = ref(false)
 const error = ref('')
-const totpSecret = ref('')
-const totpUri = ref('')
+const passkeySupported = ref(false)
+const passkeyRegistered = ref(false)
+const passkeyLoading = ref(false)
 
 onMounted(async () => {
   try {
@@ -21,6 +23,8 @@ onMounted(async () => {
       router.push('/login')
     }
   } catch {}
+
+  passkeySupported.value = isWebAuthnSupported()
 })
 
 async function doSetup() {
@@ -39,12 +43,10 @@ async function doSetup() {
     const res = await axios.post('/api/auth/setup', {
       username: username.value,
       password: password.value,
-      enable_totp: enableTotp.value,
+      enable_totp: false,
     })
     if (res.data.ok) {
-      if (res.data.totp_secret) {
-        totpSecret.value = res.data.totp_secret
-        totpUri.value = res.data.totp_uri
+      if (passkeySupported.value) {
         step.value = 2
       } else {
         step.value = 3
@@ -59,6 +61,45 @@ async function doSetup() {
   }
 }
 
+async function doRegisterPasskey() {
+  passkeyLoading.value = true
+  error.value = ''
+  try {
+    const startRes = await passkeyApi.registerStart()
+    if (!startRes.ok) {
+      error.value = startRes.error
+      return
+    }
+
+    const credential = await registerPasskey({
+      challenge: startRes.challenge,
+      rp: startRes.rp,
+      user: startRes.user,
+      excludeCredentials: startRes.excludeCredentials,
+    })
+
+    const finishRes = await passkeyApi.registerFinish(credential)
+    if (finishRes.ok) {
+      passkeyRegistered.value = true
+      step.value = 3
+    } else {
+      error.value = finishRes.error || 'Passkey 注册失败'
+    }
+  } catch (e: any) {
+    if (e.name === 'NotAllowedError') {
+      error.value = '用户取消了 Passkey 注册'
+    } else {
+      error.value = e.message || 'Passkey 注册失败'
+    }
+  } finally {
+    passkeyLoading.value = false
+  }
+}
+
+function skipPasskey() {
+  step.value = 3
+}
+
 function finish() {
   router.push('/')
 }
@@ -67,7 +108,7 @@ function finish() {
 <template>
   <div class="setup-page">
     <div class="setup-card">
-      <!-- Step 1: 基础设置 -->
+      <!-- Step 1: 创建账户 -->
       <template v-if="step === 1">
         <div class="setup-logo">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="40" height="40">
@@ -88,39 +129,32 @@ function finish() {
         </div>
         <div class="form-group">
           <label class="form-label">确认密码</label>
-          <input class="form-input" type="password" v-model="confirmPassword" placeholder="再次输入密码" />
-        </div>
-
-        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-          <input type="checkbox" id="totp" v-model="enableTotp" style="width: 18px; height: 18px;" />
-          <label for="totp" style="font-size: 14px; cursor: pointer;">启用 TOTP 身份验证器（推荐）</label>
+          <input class="form-input" type="password" v-model="confirmPassword" placeholder="再次输入密码" @keyup.enter="doSetup" />
         </div>
 
         <div v-if="error" style="color: var(--red); font-size: 14px; margin-bottom: 16px;">{{ error }}</div>
 
         <button class="btn btn-primary" style="width: 100%;" @click="doSetup" :disabled="loading">
-          {{ loading ? '设置中...' : '完成设置' }}
+          {{ loading ? '创建中...' : '创建账户' }}
         </button>
       </template>
 
-      <!-- Step 2: TOTP 二维码 -->
+      <!-- Step 2: Passkey 注册 -->
       <template v-if="step === 2">
-        <h1 class="setup-title">绑定身份验证器</h1>
-        <p class="setup-subtitle">使用 Google Authenticator / Authy 等 App 扫描二维码</p>
-
-        <div style="text-align: center; margin: 24px 0;">
-          <div style="background: white; display: inline-block; padding: 16px; border-radius: 12px;">
-            <img :src="'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(totpUri)" alt="TOTP QR Code" width="200" height="200" />
-          </div>
+        <div style="text-align: center; margin-bottom: 20px;">
+          <div style="font-size: 48px; margin-bottom: 12px;">🔑</div>
+          <h1 class="setup-title">设置 Passkey</h1>
+          <p class="setup-subtitle">使用指纹、面容或安全密钥快速登录，无需输入密码</p>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">密钥（手动输入）</label>
-          <input class="form-input" :value="totpSecret" readonly style="font-family: monospace; text-align: center;" />
-        </div>
+        <div v-if="error" style="color: var(--red); font-size: 14px; margin-bottom: 16px;">{{ error }}</div>
 
-        <button class="btn btn-primary" style="width: 100%;" @click="step = 3">
-          已绑定，继续
+        <button class="btn btn-primary" style="width: 100%; margin-bottom: 12px;" @click="doRegisterPasskey" :disabled="passkeyLoading">
+          {{ passkeyLoading ? '注册中...' : '注册 Passkey' }}
+        </button>
+
+        <button class="btn btn-secondary" style="width: 100%;" @click="skipPasskey">
+          跳过，稍后设置
         </button>
       </template>
 
@@ -129,7 +163,9 @@ function finish() {
         <div style="text-align: center;">
           <div style="font-size: 48px; margin-bottom: 16px;">✅</div>
           <h1 class="setup-title">设置完成</h1>
-          <p class="setup-subtitle">管理员账户已创建，开始使用吧</p>
+          <p class="setup-subtitle">
+            {{ passkeyRegistered ? 'Passkey 已注册，可以使用指纹或面容登录' : '管理员账户已创建' }}
+          </p>
           <button class="btn btn-primary" style="margin-top: 24px;" @click="finish">
             进入控制台
           </button>

@@ -161,8 +161,10 @@ pub async fn logout(jar: CookieJar, State(state): State<Arc<AppState>>) -> (Cook
             .execute(&state.db)
             .await;
     }
-    let cookie = axum_extra::extract::cookie::Cookie::from("session");
-    let jar = jar.remove(cookie);
+    // 删除 cookie 时必须带 Path=/，否则浏览器不会清除
+    let mut remove_cookie = axum_extra::extract::cookie::Cookie::from("session");
+    remove_cookie.set_path("/");
+    let jar = jar.remove(remove_cookie);
     (jar, Json(json!({"ok": true, "message": "已退出"})))
 }
 

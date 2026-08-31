@@ -8,12 +8,12 @@ use crate::AppState;
 
 #[derive(Deserialize)]
 pub struct PasskeyLoginStartRequest {
-    pub username: String,
+    pub username: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct PasskeyLoginFinishRequest {
-    pub username: String,
+    pub username: Option<String>,
     pub credential: serde_json::Value,
 }
 
@@ -106,6 +106,8 @@ pub async fn register_finish(
 }
 
 /// Passkey 登录：生成挑战
+/// 有用户名 → 指定 allowCredentials
+/// 无用户名 → discoverable credentials（浏览器自己选）
 pub async fn login_start(
     State(state): State<Arc<AppState>>,
     Json(body): Json<PasskeyLoginStartRequest>,
@@ -120,19 +122,30 @@ pub async fn login_start(
         .await
         .ok();
 
-    // 获取用户的凭据 ID
-    let allow_creds = crate::passkey::get_user_credential_ids(&state.db, &body.username).await;
-
-    if allow_creds.is_empty() {
-        return Json(json!({"ok": false, "error": "该用户未注册 Passkey"}));
+    match body.username {
+        Some(username) => {
+            // 有用户名 → 指定凭据
+            let allow_creds = crate::passkey::get_user_credential_ids(&state.db, &username).await;
+            if allow_creds.is_empty() {
+                return Json(json!({"ok": false, "error": "该用户未注册 Passkey"}));
+            }
+            Json(json!({
+                "ok": true,
+                "challenge": challenge,
+                "rpId": crate::passkey::get_rp_id(),
+                "allowCredentials": allow_creds,
+            }))
+        }
+        None => {
+            // 无用户名 → discoverable credentials
+            Json(json!({
+                "ok": true,
+                "challenge": challenge,
+                "rpId": crate::passkey::get_rp_id(),
+                "allowCredentials": [],
+            }))
+        }
     }
-
-    Json(json!({
-        "ok": true,
-        "challenge": challenge,
-        "rpId": crate::passkey::get_rp_id(),
-        "allowCredentials": allow_creds,
-    }))
 }
 
 /// Passkey 登录：验证签名
@@ -208,17 +221,35 @@ pub async fn delete(
     }
 }
 
-/// 检查用户是否有 Passkey
+/// 检查用户是否有 Passkey（可选用户名，不传则检查是否有任何用户注册了 Passkey）
 pub async fn has_passkey(
     State(state): State<Arc<AppState>>,
     Json(body): Json<PasskeyLoginStartRequest>,
 ) -> Json<Value> {
-    let cred_ids = crate::passkey::get_user_credential_ids(&state.db, &body.username).await;
-    Json(json!({
-        "ok": true,
-        "has_passkey": !cred_ids.is_empty(),
-        "credential_count": cred_ids.len(),
-    }))
+    match body.username {
+        Some(username) => {
+            let cred_ids = crate::passkey::get_user_credential_ids(&state.db, &username).await;
+            Json(json!({
+                "ok": true,
+                "has_passkey": !cred_ids.is_empty(),
+                "credential_count": cred_ids.len(),
+            }))
+        }
+        None => {
+            // 检查是否有任何用户注册了 Passkey
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM users WHERE passkey_credential IS NOT NULL"
+            )
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+            Json(json!({
+                "ok": true,
+                "has_passkey": count > 0,
+                "credential_count": count,
+            }))
+        }
+    }
 }
 
 async fn get_user_id(state: &AppState, jar: &CookieJar) -> Option<i64> {

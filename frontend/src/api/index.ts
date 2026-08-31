@@ -44,9 +44,9 @@ export const authApi = {
 }
 
 export const passkeyApi = {
-  hasPasskey: (username: string) => api.post('/passkey/has', { username }).then(r => r.data),
-  loginStart: (username: string) => api.post('/passkey/login/start', { username }).then(r => r.data),
-  loginFinish: (username: string, credential: any) => api.post('/passkey/login/finish', { username, credential }).then(r => r.data),
+  hasPasskey: (username?: string) => api.post('/passkey/has', username ? { username } : {}).then(r => r.data),
+  loginStart: (username?: string) => api.post('/passkey/login/start', username ? { username } : {}).then(r => r.data),
+  loginFinish: (username: string, credential: any) => api.post('/passkey/login/finish', { username: username || undefined, credential }).then(r => r.data),
   registerStart: () => api.post('/passkey/register/start').then(r => r.data),
   registerFinish: (credential: any) => api.post('/passkey/register/finish', credential).then(r => r.data),
   delete: () => api.post('/passkey/delete').then(r => r.data),

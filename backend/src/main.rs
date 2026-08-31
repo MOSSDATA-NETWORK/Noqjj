@@ -15,7 +15,6 @@ use axum::Router;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tower_http::cors::{CorsLayer, AllowOrigin, AllowMethods, AllowHeaders};
-use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub struct AppState {
@@ -23,6 +22,8 @@ pub struct AppState {
     pub master_key: Vec<u8>,
     pub tls_enabled: bool,
     pub login_limiter: ratelimit::RateLimiter,
+    pub static_dir: String,
+    pub index_html: String,
 }
 
 #[tokio::main]
@@ -53,11 +54,19 @@ async fn main() -> anyhow::Result<()> {
     let tls_key = std::env::var("TLS_KEY").ok();
     let tls_enabled = tls_cert.is_some() && tls_key.is_some();
 
+    let static_dir = std::env::var("STATIC_DIR")
+        .unwrap_or_else(|_| "static".to_string());
+
+    let index_html = std::fs::read_to_string(format!("{}/index.html", static_dir))
+        .unwrap_or_else(|_| "<h1>index.html not found</h1>".to_string());
+
     let state = Arc::new(AppState {
         db: pool.clone(),
         master_key,
         tls_enabled,
         login_limiter: ratelimit::RateLimiter::new(5, 300), // 5次/5分钟
+        static_dir: static_dir.clone(),
+        index_html,
     });
 
     // 启动定时任务调度器
@@ -76,9 +85,6 @@ async fn main() -> anyhow::Result<()> {
             auth::cleanup_sessions(&cleanup_pool).await;
         }
     });
-
-    let static_dir = std::env::var("STATIC_DIR")
-        .unwrap_or_else(|_| "static".to_string());
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "3210".to_string());
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -106,7 +112,37 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .nest("/api", api::routes(state.clone()))
-        .fallback_service(ServeDir::new(&static_dir))
+        .fallback_service(tower::service_fn(move |req: axum::http::Request<axum::body::Body>| {
+            let static_dir = state.static_dir.clone();
+            let index_html = state.index_html.clone();
+            async move {
+                let path = req.uri().path().to_string();
+                let file_path = format!("{}{}", static_dir, path);
+
+                // 尝试返回静态文件
+                if let Ok(metadata) = tokio::fs::metadata(&file_path).await {
+                    if metadata.is_file() {
+                        if let Ok(content) = tokio::fs::read(&file_path).await {
+                            let mime = mime_guess::from_path(&file_path)
+                                .first_or_octet_stream()
+                                .to_string();
+                            return Ok::<_, std::convert::Infallible>(
+                                axum::response::Response::builder()
+                                    .header("content-type", mime)
+                                    .body(axum::body::Body::from(content))
+                                    .unwrap()
+                            );
+                        }
+                    }
+                }
+
+                // 非文件路径返回 index.html（SPA 路由）
+                Ok(axum::response::Response::builder()
+                    .header("content-type", "text/html; charset=utf-8")
+                    .body(axum::body::Body::from(index_html))
+                    .unwrap())
+            }
+        }))
         .layer(cors);
 
     let addr: std::net::SocketAddr = format!("{}:{}", host, port).parse()?;
