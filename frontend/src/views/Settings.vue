@@ -4,6 +4,12 @@ import { useRouter } from 'vue-router'
 import { notificationsApi, versionApi, passkeyApi } from '../api'
 import { registerPasskey, isWebAuthnSupported } from '../passkey'
 import axios from 'axios'
+import { marked } from 'marked'
+
+function renderMd(text: string): string {
+  if (!text) return ''
+  try { return marked.parse(text, { async: false }) as string } catch { return text }
+}
 
 const router = useRouter()
 const notifications = ref<any[]>([])
@@ -451,10 +457,10 @@ async function deletePasskey() {
       </div>
 
       <!-- 更新说明 -->
-      <div v-if="updateInfo?.update_available && !updateSuccess" style="margin-top: 16px; padding: 16px; background: rgba(0,122,255,0.04); border: 1px solid rgba(0,122,255,0.1); border-radius: 12px;">
-        <div style="font-weight: 600; margin-bottom: 8px;">v{{ updateInfo.latest }} 更新内容</div>
-        <div style="font-size: 14px; color: var(--text-secondary); white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ updateInfo.release_notes || '暂无更新说明' }}</div>
-        <a v-if="updateInfo.release_url" :href="updateInfo.release_url" target="_blank" style="display: inline-block; margin-top: 8px; font-size: 13px; color: var(--accent);">在 GitHub 查看 →</a>
+      <div v-if="updateInfo?.update_available && !updateSuccess" class="release-notes-card">
+        <div style="font-weight: 600; margin-bottom: 10px;">v{{ updateInfo.latest }} 更新内容</div>
+        <div class="release-notes-body" v-html="renderMd(updateInfo.release_notes || '暂无更新说明')"></div>
+        <a v-if="updateInfo.release_url" :href="updateInfo.release_url" target="_blank" style="display: inline-block; margin-top: 10px; font-size: 13px; color: var(--accent);">在 GitHub 查看 →</a>
       </div>
     </div>
 
@@ -469,7 +475,7 @@ async function deletePasskey() {
               <span class="changelog-version">{{ entry.name }}</span>
               <span class="changelog-date">{{ formatDate(entry.published_at) }}</span>
             </div>
-            <div class="changelog-notes" v-html="entry.notes || '暂无说明'"></div>
+            <div class="changelog-notes" v-html="renderMd(entry.notes || '暂无说明')"></div>
             <a :href="entry.url" target="_blank" class="changelog-link">在 GitHub 查看 →</a>
           </div>
         </div>
@@ -658,7 +664,22 @@ async function deletePasskey() {
 .changelog-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .changelog-version { font-size: 16px; font-weight: 600; }
 .changelog-date { font-size: 13px; color: var(--text-secondary); }
-.changelog-notes { font-size: 14px; color: var(--text-secondary); white-space: pre-wrap; max-height: 150px; overflow-y: auto; margin-bottom: 8px; }
+.changelog-notes { font-size: 14px; color: var(--text-secondary); max-height: 150px; overflow-y: auto; margin-bottom: 8px; line-height: 1.6; }
+.changelog-notes :deep(h2) { font-size: 15px; font-weight: 600; color: var(--text); margin: 12px 0 6px; }
+.changelog-notes :deep(h3) { font-size: 14px; font-weight: 600; color: var(--text); margin: 10px 0 4px; }
+.changelog-notes :deep(ul) { padding-left: 18px; margin: 4px 0; }
+.changelog-notes :deep(li) { margin: 2px 0; }
+.changelog-notes :deep(code) { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.changelog-notes :deep(a) { color: var(--accent); }
+
+.release-notes-card { margin-top: 16px; padding: 16px; background: rgba(0,122,255,0.04); border: 1px solid rgba(0,122,255,0.1); border-radius: 12px; }
+.release-notes-body { font-size: 14px; color: var(--text-secondary); max-height: 200px; overflow-y: auto; line-height: 1.6; }
+.release-notes-body :deep(h2) { font-size: 15px; font-weight: 600; color: var(--text); margin: 12px 0 6px; }
+.release-notes-body :deep(h3) { font-size: 14px; font-weight: 600; color: var(--text); margin: 10px 0 4px; }
+.release-notes-body :deep(ul) { padding-left: 18px; margin: 4px 0; }
+.release-notes-body :deep(li) { margin: 2px 0; }
+.release-notes-body :deep(code) { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.release-notes-body :deep(a) { color: var(--accent); }
 .changelog-link { font-size: 13px; color: var(--accent); text-decoration: none; }
 .changelog-link:hover { text-decoration: underline; }
 

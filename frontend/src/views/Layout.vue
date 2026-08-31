@@ -15,7 +15,7 @@ const navItems = [
   { name: 'hosts', label: '主机管理', path: '/hosts' },
   { name: 'scans', label: '扫描记录', path: '/scans' },
   { name: 'results', label: '检测结果', path: '/results' },
-  { name: 'settings', label: '通知设置', path: '/settings' },
+  { name: 'settings', label: '设置', path: '/settings' },
 ]
 
 onMounted(async () => {
@@ -93,15 +93,16 @@ function goToSettings() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: rgba(0,122,255,0.1);
-  border-radius: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(0,122,255,0.08), rgba(88,86,214,0.08));
+  border: 1px solid rgba(0,122,255,0.12);
+  border-radius: 10px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--accent);
   cursor: pointer;
   margin-bottom: 8px;
-  transition: background 0.2s;
+  transition: all 0.2s;
 }
 
 .update-banner:hover {
