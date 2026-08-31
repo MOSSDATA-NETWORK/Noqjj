@@ -79,12 +79,27 @@ async function loadChangelog() {
   showChangelog.value = true
 }
 
+const updateResult = ref('')
+const updateSuccess = ref(false)
+
 async function doUpdate() {
-  if (!confirm(`确定要更新到 v${updateInfo.value?.latest}？更新后需要手动重启服务。`)) return
   updating.value = true
+  updateResult.value = ''
+  updateSuccess.value = false
   try {
     const res = await versionApi.update()
-    alert(res.message || res.error)
+    if (res.ok) {
+      updateSuccess.value = true
+      updateResult.value = res.message || '更新成功，正在重启...'
+      // 等待服务重启后刷新页面
+      setTimeout(() => {
+        window.location.reload()
+      }, 5000)
+    } else {
+      updateResult.value = res.error || '更新失败'
+    }
+  } catch (e: any) {
+    updateResult.value = e.response?.data?.error || '更新失败'
   } finally {
     updating.value = false
   }
@@ -424,7 +439,19 @@ async function deletePasskey() {
         </div>
       </div>
 
-      <div v-if="updateInfo?.update_available" style="margin-top: 16px; padding: 16px; background: rgba(0,122,255,0.05); border-radius: 12px;">
+      <!-- 更新结果提示 -->
+      <div v-if="updateResult" :style="{
+        marginTop: '16px', padding: '14px 16px', borderRadius: '12px',
+        background: updateSuccess ? 'rgba(52,199,89,0.08)' : 'rgba(255,59,48,0.08)',
+        border: '1px solid ' + (updateSuccess ? 'rgba(52,199,89,0.2)' : 'rgba(255,59,48,0.2)'),
+        display: 'flex', alignItems: 'center', gap: '10px'
+      }">
+        <span style="font-size: 18px;">{{ updateSuccess ? '✅' : '❌' }}</span>
+        <span style="font-size: 14px;">{{ updateResult }}</span>
+      </div>
+
+      <!-- 更新说明 -->
+      <div v-if="updateInfo?.update_available && !updateSuccess" style="margin-top: 16px; padding: 16px; background: rgba(0,122,255,0.04); border: 1px solid rgba(0,122,255,0.1); border-radius: 12px;">
         <div style="font-weight: 600; margin-bottom: 8px;">v{{ updateInfo.latest }} 更新内容</div>
         <div style="font-size: 14px; color: var(--text-secondary); white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ updateInfo.release_notes || '暂无更新说明' }}</div>
         <a v-if="updateInfo.release_url" :href="updateInfo.release_url" target="_blank" style="display: inline-block; margin-top: 8px; font-size: 13px; color: var(--accent);">在 GitHub 查看 →</a>
