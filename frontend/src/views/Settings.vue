@@ -68,9 +68,6 @@ async function checkUpdate() {
     const res = await versionApi.check()
     if (res.ok) {
       updateInfo.value = res.data
-      if (!res.data.update_available) {
-        alert('当前已是最新版本')
-      }
     }
   } finally {
     checkingUpdate.value = false
