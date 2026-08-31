@@ -165,9 +165,10 @@ pub async fn perform_update() -> anyhow::Result<String> {
     let backup_path = current_exe.with_extension("bak");
     let _ = tokio::fs::copy(&current_exe, &backup_path).await;
 
-    // 替换二进制
+    // 替换二进制（先删再写，避免 Text file busy）
     let new_binary = tmp_dir.join("noqjj");
     if new_binary.exists() {
+        let _ = tokio::fs::remove_file(&current_exe).await;
         tokio::fs::copy(&new_binary, &current_exe).await?;
 
         #[cfg(unix)]
