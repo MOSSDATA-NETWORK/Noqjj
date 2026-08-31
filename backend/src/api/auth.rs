@@ -9,18 +9,29 @@ use crate::AppState;
 fn extract_ip(headers: &HeaderMap) -> Option<String> {
     if let Some(xff) = headers.get("x-forwarded-for") {
         if let Ok(val) = xff.to_str() {
-            if let Some(first) = val.split(',').next() {
-                let ip = first.trim().to_string();
-                if !ip.is_empty() { return Some(ip); }
+            // 取最后一个非本机IP
+            for part in val.split(',').rev() {
+                let ip = part.trim();
+                if !ip.is_empty() && ip != "127.0.0.1" && ip != "::1" {
+                    return Some(ip.to_string());
+                }
             }
         }
     }
     if let Some(xri) = headers.get("x-real-ip") {
         if let Ok(val) = xri.to_str() {
-            return Some(val.to_string());
+            let ip = val.trim();
+            if !ip.is_empty() {
+                return Some(ip.to_string());
+            }
         }
     }
     None
+}
+
+/// 判断请求是否经过反代（有 X-Forwarded-For 说明不是直连）
+fn has_proxy_header(headers: &HeaderMap) -> bool {
+    headers.get("x-forwarded-for").is_some()
 }
 
 #[derive(Deserialize)]
@@ -58,7 +69,7 @@ pub async fn check_auth(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({"ok": true, "initialized": initialized}))
 }
 
-/// 首次运行 Setup
+/// 首次运行 Setup（仅允许直连/本机请求）
 pub async fn setup(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -68,6 +79,11 @@ pub async fn setup(
 
     if crate::auth::is_initialized(&state.db).await {
         return (jar, Json(json!({"ok": false, "error": "管理员已存在，请直接登录"})));
+    }
+
+    // 仅允许直连请求（无 X-Forwarded-For），防止外部抢先注册
+    if has_proxy_header(&headers) {
+        return (jar, Json(json!({"ok": false, "error": "首次设置请通过本机访问"})));
     }
 
     let client_ip = extract_ip(&headers);
@@ -103,8 +119,8 @@ pub async fn login(
     let jar = CookieJar::new();
     let client_ip = extract_ip(&headers);
 
-    // 速率限制检查
-    let rate_key = format!("login:{}", body.username);
+    // 速率限制检查（按用户名+IP）
+    let rate_key = format!("login:{}:{}", body.username, client_ip.as_deref().unwrap_or("unknown"));
     if !state.login_limiter.check(&rate_key).await {
         let remaining = state.login_limiter.remaining_secs(&rate_key).await;
         return (jar, Json(json!({
@@ -135,7 +151,7 @@ pub async fn login(
     }
 }
 
-/// TOTP 验证
+/// TOTP 验证（带限流）
 pub async fn verify_totp(
     State(state): State<Arc<AppState>>,
     jar: CookieJar,
@@ -146,7 +162,7 @@ pub async fn verify_totp(
         None => return Json(json!({"ok": false, "error": "未登录"})),
     };
 
-    match crate::auth::verify_totp(&state.db, &token, &body.code).await {
+    match crate::auth::verify_totp(&state.db, &token, &body.code, &state.login_limiter).await {
         Ok(true) => Json(json!({"ok": true, "message": "验证成功"})),
         Ok(false) => Json(json!({"ok": false, "error": "验证码错误"})),
         Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
@@ -161,7 +177,6 @@ pub async fn logout(jar: CookieJar, State(state): State<Arc<AppState>>) -> (Cook
             .execute(&state.db)
             .await;
     }
-    // 删除 cookie 时必须带 Path=/，否则浏览器不会清除
     let mut remove_cookie = axum_extra::extract::cookie::Cookie::from("session");
     remove_cookie.set_path("/");
     let jar = jar.remove(remove_cookie);

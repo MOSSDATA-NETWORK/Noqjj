@@ -52,7 +52,9 @@ async fn main() -> anyhow::Result<()> {
     // 检查 TLS 配置
     let tls_cert = std::env::var("TLS_CERT").ok();
     let tls_key = std::env::var("TLS_KEY").ok();
-    let tls_enabled = tls_cert.is_some() && tls_key.is_some();
+    // TLS 启用条件：直接配置了证书，或位于 TLS 反代之后
+    let behind_tls_proxy = std::env::var("BEHIND_TLS_PROXY").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let tls_enabled = (tls_cert.is_some() && tls_key.is_some()) || behind_tls_proxy;
 
     let static_dir = std::env::var("STATIC_DIR")
         .unwrap_or_else(|_| "static".to_string());
@@ -117,26 +119,56 @@ async fn main() -> anyhow::Result<()> {
             let index_html = state.index_html.clone();
             async move {
                 let path = req.uri().path().to_string();
-                let file_path = format!("{}{}", static_dir, path);
+
+                // 安全检查：拒绝路径穿越和空字节
+                if path.contains("..") || path.contains('\0') {
+                    return Ok::<_, std::convert::Infallible>(
+                        axum::response::Response::builder()
+                            .status(400)
+                            .body(axum::body::Body::from("Bad Request"))
+                            .unwrap()
+                    );
+                }
+
+                // 规范化路径，确认在 static_dir 内
+                let file_path = std::path::Path::new(&static_dir).join(path.trim_start_matches('/'));
+                let canonical = match tokio::fs::canonicalize(&file_path).await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        // 文件不存在，返回 index.html（SPA 路由）
+                        return Ok(axum::response::Response::builder()
+                            .header("content-type", "text/html; charset=utf-8")
+                            .body(axum::body::Body::from(index_html))
+                            .unwrap());
+                    }
+                };
+
+                // 确认 canonical 路径仍在 static_dir 内
+                let static_canonical = tokio::fs::canonicalize(&static_dir).await
+                    .unwrap_or_else(|_| std::path::PathBuf::from(&static_dir));
+                if !canonical.starts_with(&static_canonical) {
+                    return Ok::<_, std::convert::Infallible>(
+                        axum::response::Response::builder()
+                            .status(403)
+                            .body(axum::body::Body::from("Forbidden"))
+                            .unwrap()
+                    );
+                }
 
                 // 尝试返回静态文件
-                if let Ok(metadata) = tokio::fs::metadata(&file_path).await {
-                    if metadata.is_file() {
-                        if let Ok(content) = tokio::fs::read(&file_path).await {
-                            let mime = mime_guess::from_path(&file_path)
-                                .first_or_octet_stream()
-                                .to_string();
-                            return Ok::<_, std::convert::Infallible>(
-                                axum::response::Response::builder()
-                                    .header("content-type", mime)
-                                    .body(axum::body::Body::from(content))
-                                    .unwrap()
-                            );
-                        }
+                if canonical.is_file() {
+                    if let Ok(content) = tokio::fs::read(&canonical).await {
+                        let mime = mime_guess::from_path(&canonical)
+                            .first_or_octet_stream()
+                            .to_string();
+                        return Ok(axum::response::Response::builder()
+                            .header("content-type", mime)
+                            .body(axum::body::Body::from(content))
+                            .unwrap());
                     }
                 }
 
-                // 非文件路径返回 index.html（SPA 路由）
+                // 非文件返回 index.html
                 Ok(axum::response::Response::builder()
                     .header("content-type", "text/html; charset=utf-8")
                     .body(axum::body::Body::from(index_html))

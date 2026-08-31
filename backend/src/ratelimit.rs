@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+const MAX_ENTRIES: usize = 10000; // 最大条目数，防止内存耗尽
+
 /// 内存速率限制器
 pub struct RateLimiter {
     /// key -> (失败次数, 首次失败时间)
@@ -14,8 +16,21 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(max_attempts: u32, window_secs: u64) -> Self {
+        let attempts: Arc<Mutex<HashMap<String, (u32, std::time::Instant)>>> = Arc::new(Mutex::new(HashMap::new()));
+
+        // 后台定期清理过期条目
+        let cleanup_attempts = attempts.clone();
+        let cleanup_window = window_secs;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                let mut map = cleanup_attempts.lock().await;
+                map.retain(|_, (_, first)| first.elapsed().as_secs() <= cleanup_window);
+            }
+        });
+
         Self {
-            attempts: Arc::new(Mutex::new(HashMap::new())),
+            attempts,
             max_attempts,
             window_secs,
         }
@@ -26,7 +41,6 @@ impl RateLimiter {
         let mut attempts = self.attempts.lock().await;
         if let Some((count, first)) = attempts.get(key) {
             if first.elapsed().as_secs() > self.window_secs {
-                // 窗口过期，重置
                 attempts.remove(key);
                 return true;
             }
@@ -40,6 +54,17 @@ impl RateLimiter {
     /// 记录一次失败
     pub async fn record_failure(&self, key: &str) {
         let mut attempts = self.attempts.lock().await;
+
+        // 容量检查：超过上限时清理最旧的条目
+        if attempts.len() >= MAX_ENTRIES {
+            if let Some(oldest_key) = attempts.iter()
+                .min_by_key(|(_, (_, first))| first.elapsed())
+                .map(|(k, _)| k.clone())
+            {
+                attempts.remove(&oldest_key);
+            }
+        }
+
         if let Some((count, first)) = attempts.get_mut(key) {
             if first.elapsed().as_secs() > self.window_secs {
                 *count = 1;

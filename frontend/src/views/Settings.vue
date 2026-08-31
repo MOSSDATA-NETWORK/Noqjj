@@ -5,6 +5,7 @@ import { notificationsApi, versionApi, passkeyApi } from '../api'
 import { registerPasskey, isWebAuthnSupported } from '../passkey'
 import axios from 'axios'
 import { marked } from 'marked'
+import { generateQrDataUrl } from '../qr'
 
 function renderMd(text: string): string {
   if (!text) return ''
@@ -44,6 +45,7 @@ const totpSecret = ref('')
 const totpUri = ref('')
 const totpCode = ref('')
 const totpStep = ref(1) // 1=confirm, 2=show secret, 3=verify code
+const totpQrDataUrl = ref('')
 const passkeySupported = ref(false)
 const passkeyLoading = ref(false)
 const passkeyRegistered = ref(false)
@@ -230,6 +232,7 @@ async function doResetTotpStep1() {
     if (res.data.ok) {
       totpSecret.value = res.data.totp_secret
       totpUri.value = res.data.totp_uri
+      totpQrDataUrl.value = await generateQrDataUrl(res.data.totp_uri)
       totpStep.value = 2
     } else {
       alert(res.data.error)
@@ -624,7 +627,7 @@ async function deletePasskey() {
             <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">请使用身份验证器 App 扫描二维码</p>
             <div style="text-align: center; margin: 16px 0;">
               <div style="background: white; display: inline-block; padding: 16px; border-radius: 12px;">
-                <img :src="'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(totpUri)" alt="TOTP QR Code" width="200" height="200" />
+                <img v-if="totpQrDataUrl" :src="totpQrDataUrl" alt="TOTP QR Code" width="200" height="200" />
               </div>
             </div>
             <div class="form-group">

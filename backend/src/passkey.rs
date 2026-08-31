@@ -16,10 +16,13 @@ pub fn get_expected_origin() -> String {
     if let Ok(origin) = std::env::var("RP_ORIGIN") {
         return origin;
     }
-    let port = std::env::var("PORT").unwrap_or_else(|_| "3210".to_string());
-    let tls = std::env::var("TLS_CERT").is_ok();
+    let tls = std::env::var("TLS_CERT").is_ok()
+        || std::env::var("BEHIND_TLS_PROXY").map(|v| v == "1" || v == "true").unwrap_or(false);
     let scheme = if tls { "https" } else { "http" };
-    format!("{}://localhost:{}", scheme, port)
+    // 从 HOST 环境变量获取域名，默认 localhost
+    let host = std::env::var("HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3210".to_string());
+    format!("{}://{}:{}", scheme, host, port)
 }
 
 /// 存储的凭据
@@ -48,6 +51,7 @@ pub struct AuthenticationChallenge {
 
 /// 浏览器返回的注册结果
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegistrationResponse {
     pub id: String,
     pub raw_id: String,
@@ -57,6 +61,7 @@ pub struct RegistrationResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegistrationResponseData {
     pub attestation_object: String,
     pub client_data_json: String,
@@ -64,6 +69,7 @@ pub struct RegistrationResponseData {
 
 /// 浏览器返回的认证结果
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthenticationResponse {
     pub id: String,
     pub raw_id: String,
@@ -73,6 +79,7 @@ pub struct AuthenticationResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthenticationResponseData {
     pub authenticator_data: String,
     pub client_data_json: String,
@@ -218,6 +225,13 @@ pub async fn verify_authentication(
         return Err(anyhow::anyhow!("challenge 不匹配"));
     }
 
+    // 验证 origin
+    let origin = client_value["origin"].as_str().unwrap_or("");
+    let expected_origin = get_expected_origin();
+    if origin != expected_origin {
+        return Err(anyhow::anyhow!("origin 不匹配: 期望 {}, 实际 {}", expected_origin, origin));
+    }
+
     // 2. 查找凭据
     let raw_id = base64_url_decode(&resp.raw_id)?;
 
@@ -301,11 +315,16 @@ pub async fn verify_authentication(
     verifying_key.verify(&verification_data, &sig)
         .map_err(|_| anyhow::anyhow!("签名验证失败"))?;
 
-    // 5. 更新 sign_count
+    // 5. 验证并更新 sign_count
     let new_count = ((auth_data[33] as u32) << 24)
         | ((auth_data[34] as u32) << 16)
         | ((auth_data[35] as u32) << 8)
         | (auth_data[36] as u32);
+
+    // sign_count 必须大于存储值（防克隆凭据）
+    if new_count > 0 && cred.sign_count > 0 && new_count <= cred.sign_count {
+        return Err(anyhow::anyhow!("sign_count 回退，可能为克隆凭据"));
+    }
 
     // 更新存储的凭据
     let cred_json_str: String = sqlx::query_scalar(
