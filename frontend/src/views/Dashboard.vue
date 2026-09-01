@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { resultsApi, scansApi } from '../api'
+import { timeAgo } from '../time'
 
 const stats = ref({ total_hosts: 0, online_hosts: 0, total_scans: 0, active_threats: 0, total_vms_scanned: 0 })
 const recentScans = ref<any[]>([])
@@ -37,16 +38,7 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
-function timeAgo(t: string) {
-  if (!t) return '-'
-  const d = new Date(t)
-  const now = new Date()
-  const diff = Math.floor((now.getTime() - d.getTime()) / 1000)
-  if (diff < 60) return '刚刚'
-  if (diff < 3600) return `${Math.floor(diff/60)} 分钟前`
-  if (diff < 86400) return `${Math.floor(diff/3600)} 小时前`
-  return `${Math.floor(diff/86400)} 天前`
-}
+// timeAgo 从 ../time 导入
 </script>
 
 <template>
