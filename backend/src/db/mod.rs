@@ -280,11 +280,54 @@ pub async fn update_scan_progress(pool: &SqlitePool, id: i64, total: i64, ga: i6
 
 // ---- Result CRUD ----
 
-pub async fn list_results(pool: &SqlitePool, host_id: Option<i64>) -> anyhow::Result<Vec<crate::db::Result>> {
-    match host_id {
-        Some(hid) => Ok(sqlx::query_as::<_, crate::db::Result>("SELECT * FROM results WHERE host_id = ? ORDER BY last_seen DESC").bind(hid).fetch_all(pool).await?),
-        None => Ok(sqlx::query_as::<_, crate::db::Result>("SELECT * FROM results ORDER BY last_seen DESC LIMIT 200").fetch_all(pool).await?),
+pub async fn list_results(pool: &SqlitePool, host_id: Option<i64>, status: Option<&str>, limit: i64, offset: i64) -> anyhow::Result<Vec<crate::db::Result>> {
+    let mut sql = String::from("SELECT * FROM results WHERE 1=1");
+    let mut binds: Vec<String> = vec![];
+
+    if let Some(hid) = host_id {
+        binds.push(hid.to_string());
+        sql.push_str(&format!(" AND host_id = ${}", binds.len()));
     }
+    if let Some(s) = status {
+        if !s.is_empty() {
+            binds.push(s.to_string());
+            sql.push_str(&format!(" AND status = ${}", binds.len()));
+        }
+    }
+
+    sql.push_str(" ORDER BY last_seen DESC");
+    binds.push(limit.to_string());
+    sql.push_str(&format!(" LIMIT ${}", binds.len()));
+    binds.push(offset.to_string());
+    sql.push_str(&format!(" OFFSET ${}", binds.len()));
+
+    let mut query = sqlx::query_as::<_, crate::db::Result>(&sql);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    Ok(query.fetch_all(pool).await?)
+}
+
+pub async fn count_results(pool: &SqlitePool, host_id: Option<i64>, status: Option<&str>) -> anyhow::Result<i64> {
+    let mut sql = String::from("SELECT COUNT(*) FROM results WHERE 1=1");
+    let mut binds: Vec<String> = vec![];
+
+    if let Some(hid) = host_id {
+        binds.push(hid.to_string());
+        sql.push_str(&format!(" AND host_id = ${}", binds.len()));
+    }
+    if let Some(s) = status {
+        if !s.is_empty() {
+            binds.push(s.to_string());
+            sql.push_str(&format!(" AND status = ${}", binds.len()));
+        }
+    }
+
+    let mut query = sqlx::query_scalar(&sql);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    Ok(query.fetch_one(pool).await?)
 }
 
 pub async fn upsert_result(pool: &SqlitePool, scan_id: i64, host_id: i64, vmid: &str, status: &str, method: &str, evidence: &str) -> anyhow::Result<()> {

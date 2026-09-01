@@ -7,12 +7,28 @@ use crate::{AppState, db};
 #[derive(Deserialize)]
 pub struct ListParams {
     pub host_id: Option<i64>,
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 pub async fn list(State(state): State<Arc<AppState>>, Query(params): Query<ListParams>) -> Json<Value> {
-    match db::list_results(&state.db, params.host_id).await {
-        Ok(results) => Json(json!({"ok": true, "data": results})),
-        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    let limit = params.limit.unwrap_or(20).min(100);
+    let offset = params.offset.unwrap_or(0);
+    let status_ref = params.status.as_deref();
+
+    let results = db::list_results(&state.db, params.host_id, status_ref, limit, offset).await;
+    let total = db::count_results(&state.db, params.host_id, status_ref).await;
+
+    match (results, total) {
+        (Ok(results), Ok(total)) => Json(json!({
+            "ok": true,
+            "data": results,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        })),
+        (Err(e), _) | (_, Err(e)) => Json(json!({"ok": false, "error": e.to_string()})),
     }
 }
 
@@ -25,7 +41,6 @@ pub async fn stats(State(state): State<Arc<AppState>>) -> Json<Value> {
         .fetch_one(&state.db).await.unwrap_or(0);
     let active_threats: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM results WHERE status IN ('detected','confirmed')")
         .fetch_one(&state.db).await.unwrap_or(0);
-    // 取每台主机最近一次完成的扫描，累加 VM 数（不重复计数）
     let total_vms_scanned: i64 = sqlx::query_scalar("
         SELECT COALESCE(SUM(total_vms), 0) FROM scans
         WHERE status = 'completed' AND id IN (

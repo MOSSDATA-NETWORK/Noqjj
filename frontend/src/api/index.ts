@@ -20,7 +20,8 @@ export const scansApi = {
 }
 
 export const resultsApi = {
-  list: (hostId?: number) => api.get('/results', { params: hostId ? { host_id: hostId } : {} }).then(r => r.data),
+  list: (params?: { host_id?: number; status?: string; limit?: number; offset?: number }) =>
+    api.get('/results', { params }).then(r => r.data),
   stats: () => api.get('/results/stats').then(r => r.data),
 }
 
