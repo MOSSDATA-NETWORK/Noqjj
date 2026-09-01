@@ -234,8 +234,18 @@ pub async fn update_host_agent_status(pool: &SqlitePool, id: i64, deployed: bool
 
 // ---- Scan CRUD ----
 
-pub async fn list_scans(pool: &SqlitePool) -> anyhow::Result<Vec<Scan>> {
-    Ok(sqlx::query_as::<_, Scan>("SELECT * FROM scans ORDER BY id DESC LIMIT 100").fetch_all(pool).await?)
+pub async fn list_scans(pool: &SqlitePool, limit: i64, offset: i64) -> anyhow::Result<Vec<Scan>> {
+    Ok(sqlx::query_as::<_, Scan>("SELECT * FROM scans ORDER BY id DESC LIMIT ? OFFSET ?")
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?)
+}
+
+pub async fn count_scans(pool: &SqlitePool) -> anyhow::Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM scans")
+        .fetch_one(pool)
+        .await?)
 }
 
 pub async fn create_scan(pool: &SqlitePool, host_id: Option<i64>) -> anyhow::Result<Scan> {

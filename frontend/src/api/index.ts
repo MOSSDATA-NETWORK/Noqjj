@@ -13,7 +13,7 @@ export const hostsApi = {
 }
 
 export const scansApi = {
-  list: () => api.get('/scans').then(r => r.data),
+  list: (limit = 20, offset = 0) => api.get('/scans', { params: { limit, offset } }).then(r => r.data),
   get: (id: number) => api.get(`/scans/${id}`).then(r => r.data),
   create: (hostId?: number) => api.post('/scans', { host_id: hostId }).then(r => r.data),
 }
