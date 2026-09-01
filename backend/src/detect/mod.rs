@@ -50,14 +50,14 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         let _ = db::update_scan_status(&state.db, scan_id, "running").await;
         tracing::info!("Scan {} started for host {} ({}:{})", scan_id, host.name, host.host, host.port);
 
-        // 远程执行检测脚本（带5分钟超时）
+        // 远程执行检测脚本（带10分钟超时）
         tracing::info!("Scan {} executing remote script on {}...", scan_id, host.host);
         let scan_future = crate::deploy::run_remote_scan(
             &host.host, host.port as u16, &host.username, &auth, None
         );
 
         let output = match tokio::time::timeout(
-            tokio::time::Duration::from_secs(300),
+            tokio::time::Duration::from_secs(600),
             scan_future,
         ).await {
             Ok(Ok(o)) => {

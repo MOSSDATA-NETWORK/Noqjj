@@ -24,7 +24,7 @@ const pageTitle = computed(() => {
   return item?.label || 'Noqjj'
 })
 
-onMounted(async () => {
+async function checkVersion() {
   try {
     const res = await versionApi.current()
     if (res.ok) appVersion.value = res.version
@@ -34,13 +34,18 @@ onMounted(async () => {
     if (res.ok && res.data?.update_available) {
       updateAvailable.value = true
       latestVersion.value = res.data.latest
+    } else {
+      updateAvailable.value = false
     }
   } catch {}
-})
+}
 
-// 路由切换时关闭侧边栏
+onMounted(checkVersion)
+
+// 每次路由切换时刷新版本（解决更新后不刷新的问题）
 watch(() => route.path, () => {
   sidebarOpen.value = false
+  checkVersion()
 })
 
 function navigate(path: string) {
@@ -97,7 +102,6 @@ function goToSettings() {
           <svg v-else-if="item.name === 'results'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           <svg v-else-if="item.name === 'settings'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           {{ item.label }}
-          <span v-if="item.name === 'settings' && updateAvailable" class="update-dot"></span>
         </div>
       </nav>
       <div class="sidebar-footer">
@@ -131,17 +135,5 @@ function goToSettings() {
 }
 .update-banner:hover {
   background: rgba(0,122,255,0.15);
-}
-.update-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--red);
-  margin-left: auto;
-  animation: pulse 2s infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
 }
 </style>
