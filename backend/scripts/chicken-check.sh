@@ -147,10 +147,15 @@ check_vm_disk() {
 }
 
 # 检测单个 VM 并输出一行 JSON
+# 注意：批量模式通过 xargs 带 --vmid 自调用，此时 MODE=="single"，
+# 不能用 MODE 区分批量/单台 —— 批量调用的标志是显式传了 --vmstatus
 detect_and_output() {
     local vmid="$1" vmstatus="$2"
+    local batch=false
+    [ -n "$vmstatus" ] && batch=true
+
     # 批量模式：stopped VM 跳过（磁盘扫描太慢，需手动触发）
-    if [ "$MODE" = "all" ] && [ "$vmstatus" != "running" ]; then
+    if $batch && [ "$vmstatus" != "running" ]; then
         echo "{\"vmid\":\"$vmid\",\"method\":\"none\",\"status\":\"skipped\",\"evidence\":\"vm_stopped\"}"
         return
     fi
@@ -160,12 +165,12 @@ detect_and_output() {
         r=$(check_vm_disk "$vmid")
     elif timeout 3 qm guest cmd "$vmid" ping &>/dev/null; then
         r=$(check_vm_ga "$vmid")
-    elif [ "$MODE" = "single" ]; then
+    elif $batch; then
+        # 批量模式无GA → 标记待磁盘扫描（不阻塞批量）
+        r="needs_disk_scan|none|no_guest_agent"
+    else
         # 单台模式无GA → 磁盘挂载
         r=$(check_vm_disk "$vmid")
-    else
-        # 批量模式无GA → 标记待磁盘扫描
-        r="needs_disk_scan|none|no_guest_agent"
     fi
 
     local st m ev
