@@ -30,6 +30,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/hosts/{id}", get(hosts::get).put(hosts::update).delete(hosts::delete))
         .route("/hosts/{id}/test", post(hosts::test_connection))
         .route("/hosts/{id}/deploy", post(hosts::deploy))
+        .route("/hosts/{id}/scan-vm", post(hosts::scan_vm))
         .route("/scans", get(scans::list).post(scans::create))
         .route("/scans/{id}", get(scans::get))
         .route("/results", get(results::list))

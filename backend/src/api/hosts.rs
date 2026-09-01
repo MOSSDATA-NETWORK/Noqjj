@@ -1,7 +1,13 @@
 use axum::{extract::{Path, State}, Json};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use crate::{AppState, db};
+
+#[derive(Deserialize)]
+pub struct ScanVmRequest {
+    pub vmid: String,
+}
 
 pub async fn list(State(state): State<Arc<AppState>>) -> Json<Value> {
     match db::list_hosts(&state.db).await {
@@ -86,6 +92,40 @@ pub async fn deploy(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> 
             Json(json!({"ok": true, "message": "检测脚本已部署"}))
         }
         Err(e) => Json(json!({"ok": false, "error": format!("部署失败: {}", e)})),
+    }
+}
+
+pub async fn scan_vm(State(state): State<Arc<AppState>>, Path(id): Path<i64>, Json(body): Json<ScanVmRequest>) -> Json<Value> {
+    let host = match db::get_host(&state.db, id).await {
+        Ok(h) => h,
+        Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
+    };
+
+    let auth = make_ssh_auth(&host, &state.master_key);
+
+    // 执行单 VM 磁盘扫描
+    match crate::deploy::run_remote_scan(&host.host, host.port as u16, &host.username, &auth, Some(&body.vmid)).await {
+        Ok(output) => {
+            // 解析结果并更新数据库
+            if let Ok(result) = serde_json::from_str::<serde_json::Value>(&output) {
+                if let Some(results) = result.get("results").and_then(|r| r.as_array()) {
+                    for r in results {
+                        let vmid = r.get("vmid").and_then(|v| v.as_str()).unwrap_or("");
+                        let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let method = r.get("method").and_then(|v| v.as_str()).unwrap_or("");
+                        let evidence = r.get("evidence").and_then(|v| v.as_str()).unwrap_or("");
+
+                        let db_status = if status == "detected" { "detected" }
+                            else if status == "clean" { "clean" }
+                            else { "unknown" };
+
+                        let _ = db::upsert_result(&state.db, 0, id, vmid, db_status, method, evidence).await;
+                    }
+                }
+            }
+            Json(json!({"ok": true, "message": format!("VM {} 磁盘扫描完成", body.vmid)}))
+        }
+        Err(e) => Json(json!({"ok": false, "error": format!("扫描失败: {}", e)})),
     }
 }
 
