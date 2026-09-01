@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { scansApi } from '../api'
+import { scansApi, hostsApi } from '../api'
 import { formatTime } from '../time'
 
 const scans = ref<any[]>([])
+const hosts = ref<any[]>([])
 const loading = ref(true)
 const total = ref(0)
 const pageSize = ref(20)
@@ -11,13 +12,25 @@ const currentPage = ref(1)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const hostMap = computed(() => {
+  const map: Record<number, string> = {}
+  hosts.value.forEach((h: any) => { map[h.id] = h.name })
+  return map
+})
 
 const pageOptions = [10, 20, 50, 100]
 
 onMounted(async () => {
-  await loadScans()
+  await Promise.all([loadScans(), loadHosts()])
   startAutoRefresh()
 })
+
+async function loadHosts() {
+  try {
+    const res = await hostsApi.list()
+    if (res.ok) hosts.value = res.data
+  } catch {}
+}
 
 onUnmounted(() => {
   stopAutoRefresh()
@@ -145,7 +158,7 @@ function getPageNumbers() {
             <tbody>
               <tr v-for="s in scans" :key="s.id">
                 <td style="font-weight: 600;">#{{ s.id }}</td>
-                <td>{{ s.host_id ? `主机 #${s.host_id}` : '全部' }}</td>
+                <td>{{ s.host_id ? (hostMap[s.host_id] || `主机 #${s.host_id}`) : '全部' }}</td>
                 <td>
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <span :class="['badge', statusBadge(s.status)]">{{ statusLabel(s.status) }}</span>
