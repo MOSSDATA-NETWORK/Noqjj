@@ -249,9 +249,21 @@ pub async fn count_scans(pool: &SqlitePool) -> anyhow::Result<i64> {
 }
 
 pub async fn create_scan(pool: &SqlitePool, host_id: Option<i64>) -> anyhow::Result<Scan> {
-    let id = sqlx::query("INSERT INTO scans (host_id, status, started_at) VALUES (?, 'running', CURRENT_TIMESTAMP)")
+    let id = sqlx::query("INSERT INTO scans (host_id, status) VALUES (?, 'pending')")
         .bind(host_id).execute(pool).await?.last_insert_rowid();
     Ok(sqlx::query_as::<_, Scan>("SELECT * FROM scans WHERE id = ?").bind(id).fetch_one(pool).await?)
+}
+
+/// 更新扫描状态，running 时自动设置 started_at
+pub async fn update_scan_status(pool: &SqlitePool, id: i64, status: &str) -> anyhow::Result<()> {
+    if status == "running" {
+        sqlx::query("UPDATE scans SET status=?, started_at=CURRENT_TIMESTAMP WHERE id=?")
+            .bind(status).bind(id).execute(pool).await?;
+    } else {
+        sqlx::query("UPDATE scans SET status=? WHERE id=?")
+            .bind(status).bind(id).execute(pool).await?;
+    }
+    Ok(())
 }
 
 pub async fn complete_scan(pool: &SqlitePool, id: i64, total: i64, ga: i64, disk: i64, found: i64) -> anyhow::Result<()> {
@@ -263,12 +275,6 @@ pub async fn complete_scan(pool: &SqlitePool, id: i64, total: i64, ga: i64, disk
 pub async fn fail_scan(pool: &SqlitePool, id: i64, error: &str) -> anyhow::Result<()> {
     sqlx::query("UPDATE scans SET status='failed', error=?, completed_at=CURRENT_TIMESTAMP WHERE id=?")
         .bind(error).bind(id).execute(pool).await?;
-    Ok(())
-}
-
-pub async fn update_scan_status(pool: &SqlitePool, id: i64, status: &str) -> anyhow::Result<()> {
-    sqlx::query("UPDATE scans SET status=? WHERE id=?")
-        .bind(status).bind(id).execute(pool).await?;
     Ok(())
 }
 
