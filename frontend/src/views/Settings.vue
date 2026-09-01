@@ -6,6 +6,7 @@ import { registerPasskey, isWebAuthnSupported } from '../passkey'
 import axios from 'axios'
 import { marked } from 'marked'
 import { generateQrDataUrl } from '../qr'
+import { formatTime } from '../time'
 
 function renderMd(text: string): string {
   if (!text) return ''
@@ -176,8 +177,7 @@ function levelLabel(l: string) {
 }
 
 function formatDate(d: string) {
-  if (!d) return ''
-  return new Date(d).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return formatTime(d)
 }
 
 // Account: Change Password

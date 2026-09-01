@@ -25,7 +25,13 @@ pub async fn stats(State(state): State<Arc<AppState>>) -> Json<Value> {
         .fetch_one(&state.db).await.unwrap_or(0);
     let active_threats: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM results WHERE status IN ('detected','confirmed')")
         .fetch_one(&state.db).await.unwrap_or(0);
-    let total_vms_scanned: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(total_vms),0) FROM scans WHERE status='completed'")
+    // 取每台主机最近一次完成的扫描，累加 VM 数（不重复计数）
+    let total_vms_scanned: i64 = sqlx::query_scalar("
+        SELECT COALESCE(SUM(total_vms), 0) FROM scans
+        WHERE status = 'completed' AND id IN (
+            SELECT MAX(id) FROM scans WHERE status = 'completed' GROUP BY host_id
+        )
+    ")
         .fetch_one(&state.db).await.unwrap_or(0);
 
     Json(json!({

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { scansApi } from '../api'
+import { formatTime } from '../time'
 
 const scans = ref<any[]>([])
 const loading = ref(true)
@@ -74,10 +75,7 @@ function statusBadge(s: string) {
   return m[s] || 'badge-unknown'
 }
 
-function formatTime(t: string) {
-  if (!t) return '-'
-  return new Date(t).toLocaleString('zh-CN')
-}
+// formatTime 从 ../time 导入
 
 function duration(scan: any) {
   if (!scan.started_at) return '-'

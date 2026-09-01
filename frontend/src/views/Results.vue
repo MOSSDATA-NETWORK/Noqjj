@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { resultsApi, hostsApi } from '../api'
+import { formatTime } from '../time'
 import axios from 'axios'
 
 const results = ref<any[]>([])
@@ -66,10 +67,7 @@ function parseEvidence(e: string) {
   try { return JSON.parse(e).join(', ') } catch { return e }
 }
 
-function formatTime(t: string) {
-  if (!t) return '-'
-  return new Date(t).toLocaleString('zh-CN')
-}
+// formatTime 从 ../time 导入
 
 async function triggerDiskScan(vmid: string) {
   if (!confirm(`确定要对 VM ${vmid} 执行磁盘扫描？\n\n这会复制磁盘镜像并挂载检查，可能需要几分钟。`)) return
