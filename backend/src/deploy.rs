@@ -251,3 +251,56 @@ pub async fn run_remote_cmd(host: &str, port: u16, user: &str, auth: &SshAuth, c
     let result = ssh_exec(host, port, user, auth, cmd).await?;
     Ok(result)
 }
+
+/// 检查远程脚本版本
+pub async fn check_script_version(host: &str, port: u16, user: &str, auth: &SshAuth) -> Option<String> {
+    let result = ssh_exec(host, port, user, auth, "chicken-check --version 2>/dev/null || echo none").await.ok()?;
+    let v = result.trim().to_string();
+    if v == "none" || v.is_empty() { None } else { Some(v) }
+}
+
+/// 批量重新部署脚本到所有已部署的主机
+pub async fn redeploy_all(pool: &sqlx::SqlitePool, master_key: &[u8]) -> anyhow::Result<()> {
+    let hosts = crate::db::list_hosts(pool).await?;
+    let current_version = crate::version::SCRIPT_VERSION;
+    let mut deployed = 0;
+    let mut skipped = 0;
+    let mut failed = 0;
+
+    for host in &hosts {
+        if !host.agent_deployed {
+            skipped += 1;
+            continue;
+        }
+
+        let auth = SshAuth::from_host(
+            host.password_encrypted.as_deref(),
+            host.ssh_key_encrypted.as_deref(),
+            master_key,
+        );
+
+        // 检查远程脚本版本
+        let remote_version = check_script_version(&host.host, host.port as u16, &host.username, &auth).await;
+
+        if remote_version.as_deref() == Some(current_version) {
+            skipped += 1;
+            continue;
+        }
+
+        // 版本不同或无版本，重新部署
+        tracing::info!("Redeploying script to {} (remote={}, target={})", host.name, remote_version.unwrap_or_default(), current_version);
+        match deploy_script(&host.host, host.port as u16, &host.username, &auth).await {
+            Ok(_) => {
+                deployed += 1;
+                let _ = crate::db::update_host_agent_status(pool, host.id, true).await;
+            }
+            Err(e) => {
+                tracing::warn!("Redeploy to {} failed: {}", host.name, e);
+                failed += 1;
+            }
+        }
+    }
+
+    tracing::info!("Script redeploy: {} deployed, {} skipped, {} failed", deployed, skipped, failed);
+    Ok(())
+}

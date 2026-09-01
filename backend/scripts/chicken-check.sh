@@ -25,6 +25,7 @@ while [[ $# -gt 0 ]]; do
         --all) MODE="all"; shift ;;
         --disk) FORCE_DISK=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
+        --version) echo "3"; exit 0 ;;
         *) shift ;;
     esac
 done

@@ -79,6 +79,15 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // 启动时自动检查并重新部署检测脚本（版本不一致时）
+    let deploy_state = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        if let Err(e) = deploy::redeploy_all(&deploy_state.db, &deploy_state.master_key).await {
+            tracing::warn!("Script auto-redeploy: {}", e);
+        }
+    });
+
     // 定期清理过期 session
     let cleanup_pool = pool.clone();
     tokio::spawn(async move {

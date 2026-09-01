@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 /// 当前版本（编译时从 Cargo.toml 读取）
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_REPO: &str = "MOSSDATA-NETWORK/Noqjj";
+/// 检测脚本版本（脚本内容变化时递增，用于触发自动重新部署）
+pub const SCRIPT_VERSION: &str = "3";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VersionInfo {
@@ -160,7 +162,7 @@ pub async fn perform_update() -> anyhow::Result<String> {
     let _ = tokio::fs::remove_file(&current_exe).await;
     tokio::fs::rename(&tmp_path, &current_exe).await?;
 
-    // 后台延迟重启（让 HTTP 响应先发出）
+    // 后台延迟重启（让 HTTP 响应先发出，重启后会自动重新部署脚本）
     tokio::spawn(async {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         let _ = tokio::process::Command::new("systemctl")
@@ -168,7 +170,7 @@ pub async fn perform_update() -> anyhow::Result<String> {
             .spawn();
     });
 
-    Ok(format!("已更新到 {}，正在重启...", release.tag_name))
+    Ok(format!("已更新到 {}，正在重启...重启后将自动更新所有主机的检测脚本", release.tag_name))
 }
 
 /// 比较版本号（语义化版本）
