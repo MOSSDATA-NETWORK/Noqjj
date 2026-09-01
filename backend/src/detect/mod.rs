@@ -64,30 +64,77 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             tracing::info!("Scan {} host {} has {} VMs", scan_id, host.name, vm_total);
         }
 
-        // 远程执行检测脚本（带超时）
+        // 远程执行检测脚本（带超时）+ 实时进度轮询
+        // 脚本每完成一个 VM 会把 "已处理数 已发现数" 写入进度文件，这里每3秒读取一次
         tracing::info!("Scan {} executing remote script on {}...", scan_id, host.host);
-        let scan_future = crate::deploy::run_remote_scan(
-            &host.host, host.port as u16, &host.username, &auth, None
+        let prog_file = format!("/tmp/chicken-progress-{}", scan_id);
+        let scan_cmd = format!("CHICKEN_PROGRESS={} chicken-check --all", prog_file);
+
+        // 扫描任务（独立 clone，避免借用冲突）；完成时置位 done 标志
+        let auth_scan = crate::deploy::SshAuth::from_host(
+            host.password_encrypted.as_deref(),
+            host.ssh_key_encrypted.as_deref(),
+            &state.master_key,
         );
+        let (h1, p1, u1, cmd1) = (host.host.clone(), host.port as u16, host.username.clone(), scan_cmd.clone());
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done_scan = done.clone();
+        let scan_task = tokio::spawn(async move {
+            let r = crate::deploy::ssh_exec(&h1, p1, &u1, &auth_scan, &cmd1).await;
+            done_scan.store(true, std::sync::atomic::Ordering::Relaxed);
+            r
+        });
+
+        // 进度轮询任务（vm_total>0 时才启用）：每3秒读一次进度文件
+        let auth_poll = crate::deploy::SshAuth::from_host(
+            host.password_encrypted.as_deref(),
+            host.ssh_key_encrypted.as_deref(),
+            &state.master_key,
+        );
+        let (h2, p2, u2) = (host.host.clone(), host.port as u16, host.username.clone());
+        let db2 = state.db.clone();
+        let total_now = vm_total;
+        let cat_cmd = format!("cat {}", prog_file);
+        let done_poll = done.clone();
+        tokio::spawn(async move {
+            if total_now <= 0 { return; }
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                if done_poll.load(std::sync::atomic::Ordering::Relaxed) { break; }
+                if let Ok(prog) = crate::deploy::ssh_exec(&h2, p2, &u2, &auth_poll, &cat_cmd).await {
+                    let mut it = prog.split_whitespace();
+                    if let (Some(n), Some(f)) = (it.next(), it.next()) {
+                        if let (Ok(n), Ok(f)) = (n.parse::<i64>(), f.parse::<i64>()) {
+                            let _ = db::update_scan_progress(&db2, scan_id, total_now, n, 0, f).await;
+                        }
+                    }
+                }
+            }
+        });
 
         let output = match tokio::time::timeout(
             tokio::time::Duration::from_secs(900),
-            scan_future,
+            scan_task,
         ).await {
-            Ok(Ok(o)) => {
+            Ok(Ok(Ok(o))) => {
                 tracing::info!("Scan {} remote script returned {} bytes", scan_id, o.len());
                 o
             }
-            Ok(Err(e)) => {
+            Ok(Ok(Err(e))) => {
                 tracing::error!("Scan {} host {} scan failed: {}", scan_id, host.name, e);
                 let _ = db::update_host_status(&state.db, host.id, "error").await;
                 let _ = db::fail_scan(&state.db, scan_id, &format!("扫描失败: {}", e)).await;
                 continue;
             }
+            Ok(Err(e)) => {
+                tracing::error!("Scan {} host {} scan task join error: {}", scan_id, host.name, e);
+                let _ = db::fail_scan(&state.db, scan_id, "扫描任务异常").await;
+                continue;
+            }
             Err(_) => {
-                tracing::error!("Scan {} host {} scan timed out after 5 minutes", scan_id, host.name);
+                tracing::error!("Scan {} host {} scan timed out after 15 minutes", scan_id, host.name);
                 let _ = db::update_host_status(&state.db, host.id, "error").await;
-                let _ = db::fail_scan(&state.db, scan_id, "扫描超时（5分钟）").await;
+                let _ = db::fail_scan(&state.db, scan_id, "扫描超时（15分钟）").await;
                 continue;
             }
         };
@@ -170,19 +217,22 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             } else if r.status == "clean" {
                 if prev_detected.contains(&r.vmid) { "cleaned" } else { "clean" }
             } else if r.status == "skipped" {
-                // 无GA跳过（批量模式），不计入统计
+                // 停止的VM跳过（批量模式），不入库不统计
                 continue;
+            } else if r.status == "needs_disk_scan" {
+                "needs_disk_scan"
+            } else if r.status == "error" {
+                "error"
             } else {
                 "unknown"
             };
 
-            if status != "clean" {
-                db::upsert_result(&state.db, scan_id, host.id, &r.vmid, status, &r.method, evidence).await?;
+            // 每台 VM 都落库（覆盖历史状态行，避免残留垃圾数据）
+            db::upsert_result(&state.db, scan_id, host.id, &r.vmid, status, &r.method, evidence).await?;
 
-                if status == "detected" || status == "cleaned" {
-                    let ev: Vec<String> = evidence.split_whitespace().map(|s| s.to_string()).collect();
-                    crate::notify::send_all(&state.db, &state.master_key, status, &host.name, &r.vmid, &ev.join(" ")).await;
-                }
+            if status == "detected" || status == "cleaned" {
+                let ev: Vec<String> = evidence.split_whitespace().map(|s| s.to_string()).collect();
+                crate::notify::send_all(&state.db, &state.master_key, status, &host.name, &r.vmid, &ev.join(" ")).await;
             }
 
             // 每处理5个VM更新一次进度

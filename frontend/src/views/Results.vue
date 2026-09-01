@@ -65,7 +65,7 @@ function statusBadge(s: string) {
   const m: Record<string, string> = {
     detected: 'badge-detected', confirmed: 'badge-confirmed',
     cleaned: 'badge-cleaned', clean: 'badge-clean',
-    needs_disk_scan: 'badge-confirmed',
+    needs_disk_scan: 'badge-confirmed', error: 'badge-detected',
   }
   return m[s] || 'badge-unknown'
 }
@@ -73,7 +73,7 @@ function statusBadge(s: string) {
 function statusLabel(s: string) {
   const m: Record<string, string> = {
     detected: '新发现', confirmed: '持续存在', cleaned: '已清除', clean: '正常',
-    needs_disk_scan: '待检测',
+    needs_disk_scan: '待检测', error: '检测失败',
   }
   return m[s] || s
 }

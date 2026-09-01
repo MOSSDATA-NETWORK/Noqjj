@@ -189,14 +189,29 @@ fi
 # ---- 单台模式 ----
 if [ "$MODE" = "single" ] && [ -n "$TARGET_VMID" ]; then
     echo '{"results":['
-    detect_and_output "$TARGET_VMID" "running"
+    # 第三参数留空 = 非批量（无GA时走磁盘挂载完整检测）
+    detect_and_output "$TARGET_VMID" ""
     echo ']}'
     exit 0
 fi
 
 # ---- 批量模式：xargs 并行自调用 ----
+# 进度文件：每处理完一个 VM 写入 "已处理数 已发现数"，供平台后端轮询实现实时进度
+PROGRESS_FILE="${CHICKEN_PROGRESS:-}"
+[ -n "$PROGRESS_FILE" ] && : > "$PROGRESS_FILE" 2>/dev/null
+
 echo '{"results":['
+sep=""
+n=0; found=0
 qm list 2>/dev/null | awk 'NR>1 && $1 ~ /^[0-9]+$/ {print $1"|"$(NF-3)}' \
     | xargs -P "$PARALLEL" -I LINE bash -c 'v="${1%%|*}"; s="${1##*|}"; exec "'"$SELF"'" --oneline --vmid "$v" --vmstatus "$s"' _ LINE \
-    | paste -sd',' -
+    | while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        n=$((n+1))
+        case "$line" in *'"detected"'*) found=$((found+1));; esac
+        printf '%s%s' "$sep" "$line"
+        sep=","
+        [ -n "$PROGRESS_FILE" ] && echo "$n $found" > "$PROGRESS_FILE" 2>/dev/null
+      done
+echo
 echo ']}'
