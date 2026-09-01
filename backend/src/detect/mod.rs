@@ -23,7 +23,7 @@ struct ScriptResult {
     evidence: Option<String>,
 }
 
-/// 运行扫描（通过远程脚本）
+/// 运行扫描（通过远程脚本，带超时和进度更新）
 pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) -> anyhow::Result<()> {
     let hosts = match host_id {
         Some(hid) => vec![db::get_host(&state.db, hid).await?],
@@ -46,14 +46,29 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             &state.master_key,
         );
 
-        // 远程执行检测脚本
-        let output = match crate::deploy::run_remote_scan(
+        // 更新扫描状态为 running
+        let _ = db::update_scan_status(&state.db, scan_id, "running").await;
+
+        // 远程执行检测脚本（带5分钟超时）
+        let scan_future = crate::deploy::run_remote_scan(
             &host.host, host.port as u16, &host.username, &auth, None
+        );
+
+        let output = match tokio::time::timeout(
+            tokio::time::Duration::from_secs(300),
+            scan_future,
         ).await {
-            Ok(o) => o,
-            Err(e) => {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => {
                 tracing::error!("Host {} scan failed: {}", host.name, e);
                 let _ = db::update_host_status(&state.db, host.id, "error").await;
+                let _ = db::fail_scan(&state.db, scan_id, &format!("扫描失败: {}", e)).await;
+                continue;
+            }
+            Err(_) => {
+                tracing::error!("Host {} scan timed out after 5 minutes", host.name);
+                let _ = db::update_host_status(&state.db, host.id, "error").await;
+                let _ = db::fail_scan(&state.db, scan_id, "扫描超时（5分钟）").await;
                 continue;
             }
         };
@@ -63,6 +78,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             Ok(o) => o,
             Err(e) => {
                 tracing::error!("Host {} output parse failed: {}, raw: {}", host.name, e, output);
+                let _ = db::fail_scan(&state.db, scan_id, &format!("脚本输出解析失败: {}", e)).await;
                 continue;
             }
         };
@@ -82,7 +98,10 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
 
         let mut current_detected = std::collections::HashSet::new();
 
-        for r in &script_output.results {
+        // 更新 VM 总数（进度反馈）
+        let _ = db::update_scan_progress(&state.db, scan_id, total, 0, 0, 0).await;
+
+        for (i, r) in script_output.results.iter().enumerate() {
             match r.method.as_str() {
                 "ga" => ga_count += 1,
                 "disk" => disk_count += 1,
@@ -107,6 +126,11 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                     let ev: Vec<String> = evidence.split_whitespace().map(|s| s.to_string()).collect();
                     crate::notify::send_all(&state.db, &state.master_key, status, &host.name, &r.vmid, &ev.join(" ")).await;
                 }
+            }
+
+            // 每处理5个VM更新一次进度
+            if (i + 1) % 5 == 0 || i + 1 == total as usize {
+                let _ = db::update_scan_progress(&state.db, scan_id, total, ga_count, disk_count, found_count).await;
             }
         }
 

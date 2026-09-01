@@ -1,18 +1,50 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { scansApi } from '../api'
 
 const scans = ref<any[]>([])
 const loading = ref(true)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
+  await loadScans()
+  // 有 running 状态的扫描时，每3秒刷新一次
+  startAutoRefresh()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
+})
+
+async function loadScans() {
   try {
     const res = await scansApi.list()
     if (res.ok) scans.value = res.data
   } finally {
     loading.value = false
   }
-})
+}
+
+function hasRunningScans() {
+  return scans.value.some((s: any) => s.status === 'running' || s.status === 'pending')
+}
+
+function startAutoRefresh() {
+  if (refreshTimer) return
+  refreshTimer = setInterval(async () => {
+    await loadScans()
+    if (!hasRunningScans()) {
+      stopAutoRefresh()
+    }
+  }, 3000)
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
 
 function statusLabel(s: string) {
   const m: Record<string, string> = { pending: '等待中', running: '运行中', completed: '已完成', failed: '失败' }
@@ -30,18 +62,29 @@ function formatTime(t: string) {
 }
 
 function duration(scan: any) {
-  if (!scan.started_at || !scan.completed_at) return '-'
-  const diff = Math.floor((new Date(scan.completed_at).getTime() - new Date(scan.started_at).getTime()) / 1000)
+  if (!scan.started_at) return '-'
+  const end = scan.completed_at ? new Date(scan.completed_at).getTime() : Date.now()
+  const diff = Math.floor((end - new Date(scan.started_at).getTime()) / 1000)
   if (diff < 60) return `${diff}秒`
   return `${Math.floor(diff/60)}分${diff%60}秒`
+}
+
+function progressPercent(scan: any) {
+  if (scan.status !== 'running' || !scan.total_vms) return 0
+  // ga_count + disk_count = 已检测的VM数
+  const processed = (scan.ga_count || 0) + (scan.disk_count || 0)
+  return Math.min(100, Math.round((processed / scan.total_vms) * 100))
 }
 </script>
 
 <template>
   <div>
     <div class="page-header">
-      <h1 class="page-title">扫描记录</h1>
-      <p class="page-subtitle">查看历史扫描任务</p>
+      <div>
+        <h1 class="page-title">扫描记录</h1>
+        <p class="page-subtitle">查看历史扫描任务</p>
+      </div>
+      <button class="btn btn-secondary" @click="loadScans()">刷新</button>
     </div>
 
     <div class="card">
@@ -70,10 +113,23 @@ function duration(scan: any) {
             <tr v-for="s in scans" :key="s.id">
               <td style="font-weight: 600;">#{{ s.id }}</td>
               <td>{{ s.host_id ? `主机 #${s.host_id}` : '全部' }}</td>
-              <td><span :class="['badge', statusBadge(s.status)]">{{ statusLabel(s.status) }}</span></td>
-              <td>{{ s.total_vms }}</td>
-              <td>{{ s.ga_count }}</td>
-              <td>{{ s.disk_count }}</td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span :class="['badge', statusBadge(s.status)]">{{ statusLabel(s.status) }}</span>
+                  <div v-if="s.status === 'running' && s.total_vms > 0" style="flex: 1; min-width: 60px;">
+                    <div style="background: var(--border); border-radius: 4px; height: 6px; overflow: hidden;">
+                      <div :style="{ width: progressPercent(s) + '%', height: '100%', background: 'var(--accent)', borderRadius: '4px', transition: 'width 0.3s' }"></div>
+                    </div>
+                    <div style="font-size: 11px; color: var(--text-tertiary); margin-top: 2px;">
+                      {{ (s.ga_count || 0) + (s.disk_count || 0) }}/{{ s.total_vms }}
+                    </div>
+                  </div>
+                  <div v-else-if="s.status === 'running'" class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></div>
+                </div>
+              </td>
+              <td>{{ s.total_vms || '-' }}</td>
+              <td>{{ s.ga_count || '-' }}</td>
+              <td>{{ s.disk_count || '-' }}</td>
               <td>
                 <span :style="{ color: s.found_count > 0 ? 'var(--red)' : 'var(--green)', fontWeight: 600 }">
                   {{ s.found_count }}

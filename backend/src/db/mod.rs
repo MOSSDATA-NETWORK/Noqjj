@@ -256,6 +256,18 @@ pub async fn fail_scan(pool: &SqlitePool, id: i64, error: &str) -> anyhow::Resul
     Ok(())
 }
 
+pub async fn update_scan_status(pool: &SqlitePool, id: i64, status: &str) -> anyhow::Result<()> {
+    sqlx::query("UPDATE scans SET status=? WHERE id=?")
+        .bind(status).bind(id).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn update_scan_progress(pool: &SqlitePool, id: i64, total: i64, ga: i64, disk: i64, found: i64) -> anyhow::Result<()> {
+    sqlx::query("UPDATE scans SET total_vms=?, ga_count=?, disk_count=?, found_count=? WHERE id=?")
+        .bind(total).bind(ga).bind(disk).bind(found).bind(id).execute(pool).await?;
+    Ok(())
+}
+
 // ---- Result CRUD ----
 
 pub async fn list_results(pool: &SqlitePool, host_id: Option<i64>) -> anyhow::Result<Vec<crate::db::Result>> {
