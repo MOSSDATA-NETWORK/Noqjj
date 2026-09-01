@@ -64,12 +64,12 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
     let mut args = vec![
         "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
         "-o".to_string(), "ConnectTimeout=10".to_string(),
-        "-o".to_string(), "BatchMode=yes".to_string(),
         "-p".to_string(), port.to_string(),
     ];
 
     match auth {
         SshAuth::Password(pass) => {
+            // 密码模式：不用 BatchMode（会禁用密码认证）
             // 写密码到临时文件，避免进程列表泄露
             let pass_file = format!("/tmp/ssh-pass-{}", uuid::Uuid::new_v4());
             tokio::fs::write(&pass_file, pass).await?;
@@ -93,15 +93,25 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
 
             let _ = tokio::fs::remove_file(&pass_file).await;
             let output = output.map_err(|_| anyhow::anyhow!("sshpass 未安装"))?;
+            if !output.status.success() && output.stdout.is_empty() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow::anyhow!("SSH 执行失败: {}", stderr.trim()));
+            }
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
         SshAuth::KeyContent(key) => {
+            // 密钥模式：可以用 BatchMode
+            args.push("-o".to_string());
+            args.push("BatchMode=yes".to_string());
             let path = write_temp_key(key).await?;
             key_file_path = Some(path.clone());
             args.push("-i".to_string());
             args.push(path);
         }
-        SshAuth::None => {}
+        SshAuth::None => {
+            args.push("-o".to_string());
+            args.push("BatchMode=yes".to_string());
+        }
     }
 
     args.push(format!("{}@{}", user, host));
@@ -114,6 +124,11 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
 
     if let Some(path) = key_file_path {
         let _ = tokio::fs::remove_file(path).await;
+    }
+
+    if !output.status.success() && output.stdout.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("SSH 执行失败: {}", stderr.trim()));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
