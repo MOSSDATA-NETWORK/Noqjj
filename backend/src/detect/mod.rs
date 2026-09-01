@@ -124,6 +124,13 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         let _ = db::update_scan_progress(&state.db, scan_id, total, 0, 0, 0).await;
 
         for (i, r) in script_output.results.iter().enumerate() {
+            let evidence = r.evidence.as_deref().unwrap_or("");
+
+            // 跳过停止的 VM（不计入统计、不入库）
+            if evidence == "vm_stopped" {
+                continue;
+            }
+
             match r.method.as_str() {
                 "ga" => ga_count += 1,
                 "disk" => disk_count += 1,
@@ -136,12 +143,14 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 if prev_detected.contains(&r.vmid) { "confirmed" } else { "detected" }
             } else if r.status == "clean" {
                 if prev_detected.contains(&r.vmid) { "cleaned" } else { "clean" }
+            } else if r.status == "skipped" && evidence == "no_guest_agent" {
+                // 无 Guest Agent，标记为待磁盘扫描
+                "needs_disk_scan"
             } else {
                 "unknown"
             };
 
             if status != "clean" {
-                let evidence = r.evidence.as_deref().unwrap_or("");
                 db::upsert_result(&state.db, scan_id, host.id, &r.vmid, status, &r.method, evidence).await?;
 
                 if status == "detected" || status == "cleaned" {

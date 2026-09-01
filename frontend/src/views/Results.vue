@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { resultsApi, hostsApi } from '../api'
+import axios from 'axios'
 
 const results = ref<any[]>([])
 const hosts = ref<any[]>([])
 const loading = ref(true)
 const filterHost = ref<number | null>(null)
 const filterStatus = ref('')
+const scanningVmid = ref<string | null>(null)
 
 onMounted(async () => {
   try {
@@ -34,10 +36,15 @@ function filteredResults() {
   return r
 }
 
+function needsDiskScanCount() {
+  return results.value.filter(x => x.status === 'needs_disk_scan').length
+}
+
 function statusBadge(s: string) {
   const m: Record<string, string> = {
     detected: 'badge-detected', confirmed: 'badge-confirmed',
     cleaned: 'badge-cleaned', clean: 'badge-clean',
+    needs_disk_scan: 'badge-confirmed',
   }
   return m[s] || 'badge-unknown'
 }
@@ -45,6 +52,7 @@ function statusBadge(s: string) {
 function statusLabel(s: string) {
   const m: Record<string, string> = {
     detected: '新发现', confirmed: '持续存在', cleaned: '已清除', clean: '正常',
+    needs_disk_scan: '待检测',
   }
   return m[s] || s
 }
@@ -61,6 +69,30 @@ function parseEvidence(e: string) {
 function formatTime(t: string) {
   if (!t) return '-'
   return new Date(t).toLocaleString('zh-CN')
+}
+
+async function triggerDiskScan(vmid: string) {
+  if (!confirm(`确定要对 VM ${vmid} 执行磁盘扫描？\n\n这会复制磁盘镜像并挂载检查，可能需要几分钟。`)) return
+  scanningVmid.value = vmid
+  try {
+    // 找到该 VM 所属的主机
+    const result = results.value.find(r => r.vmid === vmid)
+    const hostId = result?.host_id
+    if (!hostId) { alert('未找到主机信息'); return }
+
+    const res = await axios.post(`/api/hosts/${hostId}/scan-vm`, { vmid })
+    if (res.data.ok) {
+      alert(`VM ${vmid} 磁盘扫描已启动，完成后结果会自动更新`)
+      // 刷新结果
+      setTimeout(() => loadResults(), 30000)
+    } else {
+      alert(res.data.error || '扫描失败')
+    }
+  } catch (e: any) {
+    alert(e.response?.data?.error || '请求失败')
+  } finally {
+    scanningVmid.value = null
+  }
 }
 </script>
 
@@ -81,7 +113,21 @@ function formatTime(t: string) {
           <option value="detected">新发现</option>
           <option value="confirmed">持续存在</option>
           <option value="cleaned">已清除</option>
+          <option value="needs_disk_scan">待检测</option>
         </select>
+      </div>
+    </div>
+
+    <!-- 磁盘扫描提示 -->
+    <div v-if="needsDiskScanCount() > 0" class="card" style="margin-bottom: 16px; background: rgba(255,149,0,0.04); border: 1px solid rgba(255,149,0,0.15);">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 24px;">💾</span>
+        <div style="flex: 1;">
+          <div style="font-weight: 600;">{{ needsDiskScanCount() }} 个 VM 未安装 Guest Agent</div>
+          <div style="font-size: 13px; color: var(--text-secondary); margin-top: 2px;">
+            这些 VM 无法通过 GA 检测，需要复制磁盘镜像挂载后扫描文件系统
+          </div>
+        </div>
       </div>
     </div>
 
@@ -103,6 +149,7 @@ function formatTime(t: string) {
               <th>证据</th>
               <th>首次发现</th>
               <th>最后检测</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -118,6 +165,14 @@ function formatTime(t: string) {
               </td>
               <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(r.first_seen) }}</td>
               <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(r.last_seen) }}</td>
+              <td>
+                <button v-if="r.status === 'needs_disk_scan'"
+                  class="btn btn-sm btn-secondary"
+                  @click="triggerDiskScan(r.vmid)"
+                  :disabled="scanningVmid === r.vmid">
+                  {{ scanningVmid === r.vmid ? '扫描中...' : '磁盘扫描' }}
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
