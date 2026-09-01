@@ -245,3 +245,9 @@ pub async fn run_remote_scan(host: &str, port: u16, user: &str, auth: &SshAuth, 
     let result = ssh_exec(host, port, user, auth, &cmd).await?;
     Ok(result)
 }
+
+/// 远程执行任意命令
+pub async fn run_remote_cmd(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &str) -> anyhow::Result<String> {
+    let result = ssh_exec(host, port, user, auth, cmd).await?;
+    Ok(result)
+}

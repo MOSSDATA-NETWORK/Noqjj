@@ -63,3 +63,21 @@ pub async fn create(State(state): State<Arc<AppState>>, Json(body): Json<CreateS
 
     Json(json!({"ok": true, "data": scan, "message": "扫描已启动"}))
 }
+
+pub async fn stop(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Json<Value> {
+    // 将扫描状态标记为 stopped，检测循环会检查此状态并退出
+    match sqlx::query("UPDATE scans SET status='stopped', completed_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'")
+        .bind(id)
+        .execute(&state.db)
+        .await
+    {
+        Ok(r) => {
+            if r.rows_affected() > 0 {
+                Json(json!({"ok": true, "message": "扫描已停止"}))
+            } else {
+                Json(json!({"ok": false, "error": "扫描不存在或未在运行"}))
+            }
+        }
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
+}

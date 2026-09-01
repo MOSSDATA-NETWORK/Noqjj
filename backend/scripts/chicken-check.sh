@@ -53,6 +53,8 @@ check_vm_ga() {
         [ "$hist" -gt 0 ] 2>/dev/null && found="${found}history:${hist} "
         net=$(ss -tnp 2>/dev/null | grep -ciE "nodeget|incushlii|ji\.778822|nodehatch" || true)
         [ "$net" -gt 0 ] 2>/dev/null && found="${found}network:${net} "
+        proc=$(ps aux 2>/dev/null | grep -ciE "incusd|incushlii|nodeget|qemu-system" | grep -v grep || true)
+        [ "$proc" -gt 0 ] 2>/dev/null && found="${found}process:${proc} "
         [ -n "$found" ] && echo "FOUND:$found" || echo "CLEAN"
     ' 2>/dev/null | tr -d '\r\n\t ')
 

@@ -16,6 +16,7 @@ export const scansApi = {
   list: (limit = 20, offset = 0) => api.get('/scans', { params: { limit, offset } }).then(r => r.data),
   get: (id: number) => api.get(`/scans/${id}`).then(r => r.data),
   create: (hostId?: number) => api.post('/scans', { host_id: hostId }).then(r => r.data),
+  stop: (id: number) => api.post(`/scans/${id}/stop`).then(r => r.data),
 }
 
 export const resultsApi = {

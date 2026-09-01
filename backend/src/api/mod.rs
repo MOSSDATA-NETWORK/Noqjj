@@ -33,6 +33,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/hosts/{id}/scan-vm", post(hosts::scan_vm))
         .route("/scans", get(scans::list).post(scans::create))
         .route("/scans/{id}", get(scans::get))
+        .route("/scans/{id}/stop", post(scans::stop))
         .route("/results", get(results::list))
         .route("/results/stats", get(results::stats))
         .route("/notifications", get(notifications::list).post(notifications::create))

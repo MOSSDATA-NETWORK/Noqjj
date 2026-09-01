@@ -50,7 +50,21 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         let _ = db::update_scan_status(&state.db, scan_id, "running").await;
         tracing::info!("Scan {} started for host {} ({}:{})", scan_id, host.name, host.host, host.port);
 
-        // 远程执行检测脚本（带10分钟超时）
+        // 先获取 VM 总数（快速，用于前端进度显示）
+        let vm_count_output = crate::deploy::run_remote_cmd(
+            &host.host, host.port as u16, &host.username, &auth,
+            "qm list | awk 'NR>1' | wc -l"
+        ).await;
+        let vm_total: i64 = vm_count_output
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        if vm_total > 0 {
+            let _ = db::update_scan_progress(&state.db, scan_id, vm_total, 0, 0, 0).await;
+            tracing::info!("Scan {} host {} has {} VMs", scan_id, host.name, vm_total);
+        }
+
+        // 远程执行检测脚本（带超时）
         tracing::info!("Scan {} executing remote script on {}...", scan_id, host.host);
         let scan_future = crate::deploy::run_remote_scan(
             &host.host, host.port as u16, &host.username, &auth, None
@@ -124,6 +138,17 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         let _ = db::update_scan_progress(&state.db, scan_id, total, 0, 0, 0).await;
 
         for (i, r) in script_output.results.iter().enumerate() {
+            // 检查是否被用户停止
+            let scan_status: String = sqlx::query_scalar("SELECT status FROM scans WHERE id = ?")
+                .bind(scan_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or_default();
+            if scan_status == "stopped" {
+                tracing::info!("Scan {} stopped by user at VM {}/{}", scan_id, i, total);
+                break;
+            }
+
             let evidence = r.evidence.as_deref().unwrap_or("");
 
             // 跳过停止的 VM（不计入统计、不入库）

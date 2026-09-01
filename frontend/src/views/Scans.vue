@@ -79,13 +79,20 @@ function stopAutoRefresh() {
 }
 
 function statusLabel(s: string) {
-  const m: Record<string, string> = { pending: '等待中', running: '运行中', completed: '已完成', failed: '失败' }
+  const m: Record<string, string> = { pending: '等待中', running: '运行中', completed: '已完成', failed: '失败', stopped: '已停止' }
   return m[s] || s
 }
 
 function statusBadge(s: string) {
-  const m: Record<string, string> = { running: 'badge-confirmed', completed: 'badge-clean', failed: 'badge-detected' }
+  const m: Record<string, string> = { running: 'badge-confirmed', completed: 'badge-clean', failed: 'badge-detected', stopped: 'badge-unknown' }
   return m[s] || 'badge-unknown'
+}
+
+async function stopScan(scanId: number) {
+  try {
+    await scansApi.stop(scanId)
+    await loadScans()
+  } catch {}
 }
 
 // formatTime 从 ../time 导入
@@ -162,15 +169,18 @@ function getPageNumbers() {
                 <td>
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <span :class="['badge', statusBadge(s.status)]">{{ statusLabel(s.status) }}</span>
-                    <div v-if="s.status === 'running' && s.total_vms > 0" style="flex: 1; min-width: 60px;">
-                      <div style="background: var(--border); border-radius: 4px; height: 6px; overflow: hidden;">
-                        <div :style="{ width: progressPercent(s) + '%', height: '100%', background: 'var(--accent)', borderRadius: '4px', transition: 'width 0.3s' }"></div>
+                    <template v-if="s.status === 'running'">
+                      <div v-if="s.total_vms > 0" style="flex: 1; min-width: 60px;">
+                        <div style="background: var(--border); border-radius: 4px; height: 6px; overflow: hidden;">
+                          <div :style="{ width: progressPercent(s) + '%', height: '100%', background: 'var(--accent)', borderRadius: '4px', transition: 'width 0.3s' }"></div>
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-tertiary); margin-top: 2px;">
+                          {{ (s.ga_count || 0) + (s.disk_count || 0) }}/{{ s.total_vms }}
+                        </div>
                       </div>
-                      <div style="font-size: 11px; color: var(--text-tertiary); margin-top: 2px;">
-                        {{ (s.ga_count || 0) + (s.disk_count || 0) }}/{{ s.total_vms }}
-                      </div>
-                    </div>
-                    <div v-else-if="s.status === 'running'" class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></div>
+                      <div v-else class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></div>
+                      <button class="btn btn-sm btn-danger" @click="stopScan(s.id)" title="停止扫描">停止</button>
+                    </template>
                   </div>
                 </td>
                 <td>{{ s.total_vms || '-' }}</td>
