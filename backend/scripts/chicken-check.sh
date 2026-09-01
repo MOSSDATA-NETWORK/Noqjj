@@ -1,31 +1,34 @@
 #!/bin/bash
 # chicken-check.sh — PVE 切鸡检测脚本
-# 部署到 PVE 宿主机后执行
-# 用法: chicken-check.sh [--vmid <id>] [--all] [--check-agent]
+# 用法:
+#   chicken-check.sh --all              # 批量扫描（仅GA模式，快速）
+#   chicken-check.sh --vmid <id>        # 单台扫描（GA优先，GA不可用则磁盘挂载）
+#   chicken-check.sh --vmid <id> --disk # 强制磁盘挂载模式
+#   chicken-check.sh --check-agent      # 检测脚本是否已安装
 #
 # 检测逻辑：
-#   有 GA → qm guest exec 进入 VM 内部检查文件/服务/history
-#   无 GA → 复制磁盘 → qemu-nbd 只读挂载 → 检查文件系统
-# 输出：JSON 格式结果
+#   GA模式：qm guest exec 进入VM内部检查文件/服务/history（快速，3-5秒/台）
+#   磁盘模式：qemu-nbd只读挂载检查文件系统（慢，10-15秒/台，仅单台使用）
+# 输出：JSON格式结果
 
 set -uo pipefail
 
 MODE="all"
 TARGET_VMID=""
+FORCE_DISK=false
 MOUNT_POINT="/tmp/chicken-mount-$$"
-TIMEOUT_GA=15
-TIMEOUT_DISK=30
+GA_TIMEOUT=5
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --vmid) TARGET_VMID="$2"; MODE="single"; shift 2 ;;
         --all) MODE="all"; shift ;;
+        --disk) FORCE_DISK=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
         *) shift ;;
     esac
 done
 
-# 清理函数（所有输出重定向到 /dev/null，不污染 JSON）
 cleanup() {
     umount "$MOUNT_POINT" >/dev/null 2>&1
     qemu-nbd --disconnect /dev/nbd1 >/dev/null 2>&1
@@ -33,11 +36,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# GA 方式检测：进入 VM 内部检查
+# GA模式：进入VM内部检查
 check_vm_ga() {
     local vmid="$1"
     local result
-    result=$(timeout "$TIMEOUT_GA" qm guest exec "$vmid" -- bash -c '
+    result=$(timeout "$GA_TIMEOUT" qm guest exec "$vmid" -- bash -c '
         found=""
         [ -d /opt/incus ] && found="${found}incus_dir "
         [ -f /usr/local/bin/incushlii-agent ] && found="${found}incushlii_agent "
@@ -54,9 +57,7 @@ check_vm_ga() {
     ' 2>/dev/null | tr -d '\r\n\t ')
 
     if echo "$result" | grep -q "FOUND:"; then
-        local evidence
-        evidence=$(echo "$result" | sed 's/.*FOUND://')
-        echo "detected|ga|$evidence"
+        echo "detected|ga|$(echo "$result" | sed 's/.*FOUND://')"
     elif [ -n "$result" ]; then
         echo "clean|ga|"
     else
@@ -64,7 +65,7 @@ check_vm_ga() {
     fi
 }
 
-# 磁盘挂载检测：复制磁盘 → 只读挂载 → 检查文件
+# 磁盘挂载模式：只读挂载检查文件系统
 check_vm_disk() {
     local vmid="$1"
     local disk_path="/data/images/${vmid}/vm-${vmid}-disk-0.qcow2"
@@ -74,7 +75,6 @@ check_vm_disk() {
         return
     fi
 
-    # 只读挂载原文件
     local nbd_dev="/dev/nbd1"
     modprobe nbd max_part=8 2>/dev/null || true
     qemu-nbd --disconnect "$nbd_dev" >/dev/null 2>&1 || true
@@ -83,12 +83,11 @@ check_vm_disk() {
         echo "error|disk|nbd_failed"
         return
     fi
-    sleep 1  # 等内核识别分区表
+    sleep 1
 
     mkdir -p "$MOUNT_POINT"
     local mounted=0
     for part in nbd1p5 nbd1p2 nbd1p1; do
-        # ro,noload：只读 + 跳过 ext4 日志恢复（副本操作，安全）
         if mount -o ro,noload "/dev/$part" "$MOUNT_POINT" 2>/dev/null; then
             mounted=1
             break
@@ -123,13 +122,21 @@ check_vm_disk() {
     qemu-nbd --disconnect /dev/nbd1 >/dev/null 2>&1 || true
 }
 
-# 检测单个 VM
+# 检测单个VM
 detect_vm() {
     local vmid="$1"
     local result=""
 
-    if timeout 3 qm guest cmd "$vmid" ping &>/dev/null; then
+    # 强制磁盘模式
+    if [ "$FORCE_DISK" = true ]; then
+        result=$(check_vm_disk "$vmid")
+    # GA可用 → GA模式
+    elif timeout 2 qm guest cmd "$vmid" ping &>/dev/null; then
         result=$(check_vm_ga "$vmid")
+    # 批量模式：无GA跳过（太慢）
+    elif [ "$MODE" = "all" ]; then
+        result="skipped|none|no_ga"
+    # 单台模式：无GA → 磁盘挂载
     else
         result=$(check_vm_disk "$vmid")
     fi
