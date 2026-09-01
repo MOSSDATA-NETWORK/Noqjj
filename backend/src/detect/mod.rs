@@ -48,8 +48,10 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
 
         // 更新扫描状态为 running
         let _ = db::update_scan_status(&state.db, scan_id, "running").await;
+        tracing::info!("Scan {} started for host {} ({}:{})", scan_id, host.name, host.host, host.port);
 
         // 远程执行检测脚本（带5分钟超时）
+        tracing::info!("Scan {} executing remote script on {}...", scan_id, host.host);
         let scan_future = crate::deploy::run_remote_scan(
             &host.host, host.port as u16, &host.username, &auth, None
         );
@@ -58,30 +60,50 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             tokio::time::Duration::from_secs(300),
             scan_future,
         ).await {
-            Ok(Ok(o)) => o,
+            Ok(Ok(o)) => {
+                tracing::info!("Scan {} remote script returned {} bytes", scan_id, o.len());
+                o
+            }
             Ok(Err(e)) => {
-                tracing::error!("Host {} scan failed: {}", host.name, e);
+                tracing::error!("Scan {} host {} scan failed: {}", scan_id, host.name, e);
                 let _ = db::update_host_status(&state.db, host.id, "error").await;
                 let _ = db::fail_scan(&state.db, scan_id, &format!("扫描失败: {}", e)).await;
                 continue;
             }
             Err(_) => {
-                tracing::error!("Host {} scan timed out after 5 minutes", host.name);
+                tracing::error!("Scan {} host {} scan timed out after 5 minutes", scan_id, host.name);
                 let _ = db::update_host_status(&state.db, host.id, "error").await;
                 let _ = db::fail_scan(&state.db, scan_id, "扫描超时（5分钟）").await;
                 continue;
             }
         };
 
-        // 解析 JSON 输出
-        let script_output: ScriptOutput = match serde_json::from_str(&output) {
+        // 解析 JSON 输出（尝试修复截断的JSON）
+        let preview_len = output.len().min(200);
+        tracing::info!("Scan {} parsing script output ({} bytes): {}...", scan_id, output.len(), &output[..preview_len]);
+
+        // 尝试修复可能被截断的JSON
+        let fixed_output = if output.contains("\"results\":[") && !output.trim().ends_with("]}") {
+            // 找到最后一个完整的JSON对象，补上闭合括号
+            if let Some(last_brace) = output.rfind('}') {
+                let truncated = &output[..last_brace + 1];
+                format!("{}]}}", truncated)
+            } else {
+                output.clone()
+            }
+        } else {
+            output.clone()
+        };
+
+        let script_output: ScriptOutput = match serde_json::from_str(&fixed_output) {
             Ok(o) => o,
             Err(e) => {
-                tracing::error!("Host {} output parse failed: {}, raw: {}", host.name, e, output);
+                tracing::error!("Scan {} host {} output parse failed: {}, raw: {}", scan_id, host.name, e, output);
                 let _ = db::fail_scan(&state.db, scan_id, &format!("脚本输出解析失败: {}", e)).await;
                 continue;
             }
         };
+        tracing::info!("Scan {} parsed {} VM results", scan_id, script_output.results.len());
 
         let total = script_output.results.len() as i64;
         let mut ga_count: i64 = 0;

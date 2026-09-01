@@ -64,6 +64,8 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
     let mut args = vec![
         "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
         "-o".to_string(), "ConnectTimeout=10".to_string(),
+        "-o".to_string(), "ServerAliveInterval=15".to_string(),
+        "-o".to_string(), "ServerAliveCountMax=4".to_string(),
         "-p".to_string(), port.to_string(),
     ];
 
@@ -97,6 +99,7 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(anyhow::anyhow!("SSH 执行失败: {}", stderr.trim()));
             }
+            // 只返回 stdout，忽略 stderr
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
         SshAuth::KeyContent(key) => {

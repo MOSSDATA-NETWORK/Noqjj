@@ -4,18 +4,25 @@
 # 用法: chicken-check.sh [--vmid <id>] [--all] [--check-agent]
 # 输出: JSON 格式结果
 
-set -euo pipefail
+set -uo pipefail
+
+# 重定向 stderr 到 /dev/null，防止干扰 JSON 输出
+exec 2>/dev/null
+
+# 全局超时（4分钟）
+GLOBAL_TIMEOUT=240
+( sleep $GLOBAL_TIMEOUT; kill -9 $$ 2>/dev/null ) &
+WATCHDOG_PID=$!
+trap "kill $WATCHDOG_PID 2>/dev/null" EXIT
 
 MODE="all"
 TARGET_VMID=""
-MOUNT_POINT="/mnt/chicken-check-$$"
-TEMP_VMID="$$""9999"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --vmid) TARGET_VMID="$2"; MODE="single"; shift 2 ;;
         --all) MODE="all"; shift ;;
-        --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
+        --check-agent) echo '{"ok":true,"agent":"installed"}'; kill $WATCHDOG_PID 2>/dev/null; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -90,7 +97,7 @@ detect_disk() {
     fi
 
     modprobe nbd max_part=8 2>/dev/null || true
-    if ! qemu-nbd --read-only --connect=/dev/nbd0 "$temp_disk" 2>/dev/null; then
+    if ! timeout 15 qemu-nbd --read-only --connect=/dev/nbd0 "$temp_disk" 2>/dev/null; then
         echo "{\"vmid\":\"$vmid\",\"method\":\"disk\",\"status\":\"error\",\"evidence\":\"nbd_failed\"}"
         rm -rf "$temp_dir"
         return
@@ -123,14 +130,14 @@ detect_disk() {
     rm -rf "$temp_dir"
 }
 
-# 检测单个 VM
+# 检测单个 VM（仅 GA 模式，1秒超时）
 detect_vm() {
     local vmid="$1"
-    # 优先 GA
-    if qm guest cmd "$vmid" ping &>/dev/null; then
+    if timeout 1 qm guest cmd "$vmid" ping &>/dev/null 2>&1; then
         detect_ga "$vmid"
     else
-        detect_disk "$vmid"
+        # GA 不可用，跳过（磁盘扫描太慢不适合批量）
+        echo "{\"vmid\":\"$vmid\",\"method\":\"ga\",\"status\":\"skipped\",\"evidence\":\"no_guest_agent\"}"
     fi
 }
 
@@ -142,7 +149,9 @@ if [ "$MODE" = "single" ] && [ -n "$TARGET_VMID" ]; then
     result=$(detect_vm "$TARGET_VMID")
     echo "$result"
 else
-    for vmid in $(qm list 2>/dev/null | awk 'NR>1{print $1}'); do
+    # 获取运行中的VM列表（10秒超时）
+    vm_list=$(timeout 10 qm list 2>/dev/null | awk 'NR>1 && $3=="running"{print $1}')
+    for vmid in $vm_list; do
         if [ "$first" = true ]; then
             first=false
         else
