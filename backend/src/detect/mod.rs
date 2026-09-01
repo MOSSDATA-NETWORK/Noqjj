@@ -71,7 +71,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         );
 
         let output = match tokio::time::timeout(
-            tokio::time::Duration::from_secs(600),
+            tokio::time::Duration::from_secs(900),
             scan_future,
         ).await {
             Ok(Ok(o)) => {
@@ -151,15 +151,16 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
 
             let evidence = r.evidence.as_deref().unwrap_or("");
 
-            // 跳过停止的 VM（不计入统计、不入库）
-            if evidence == "vm_stopped" {
-                continue;
-            }
-
+            // 统计检测方式（所有 VM 都计入）
             match r.method.as_str() {
                 "ga" => ga_count += 1,
                 "disk" => disk_count += 1,
                 _ => {}
+            }
+
+            // 跳过停止的 VM（不入库）
+            if evidence == "vm_stopped" {
+                continue;
             }
 
             let status = if r.status == "detected" {

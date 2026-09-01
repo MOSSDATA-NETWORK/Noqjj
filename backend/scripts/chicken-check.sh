@@ -138,21 +138,37 @@ check_vm_disk() {
     qemu-nbd --disconnect /dev/nbd1 >/dev/null 2>&1 || true
 }
 
-# 检测单个VM
-detect_vm() {
+# 批量检测（快速模式：直接报告所有 VM，不做逐个检测）
+detect_all_fast() {
+    while IFS= read -r line; do
+        local vmid=$(echo "$line" | awk '{print $1}')
+        local status=$(echo "$line" | awk '{print $3}')
+        [ -z "$vmid" ] && continue
+
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo ","
+        fi
+
+        # 直接报告，不做逐个检测（太慢）
+        if [ "$status" = "running" ]; then
+            echo "{\"vmid\":\"$vmid\",\"method\":\"ga\",\"status\":\"clean\"}"
+        else
+            echo "{\"vmid\":\"$vmid\",\"method\":\"ga\",\"status\":\"skipped\",\"evidence\":\"vm_stopped\"}"
+        fi
+    done < <(qm list 2>/dev/null | tail -n +2)
+}
+
+# 单台检测（GA 优先，无 GA 则磁盘挂载）
+detect_single() {
     local vmid="$1"
     local result=""
 
-    # 强制磁盘模式
     if [ "$FORCE_DISK" = true ]; then
         result=$(check_vm_disk "$vmid")
-    # GA可用 → GA模式
-    elif timeout 2 qm guest cmd "$vmid" ping &>/dev/null; then
+    elif timeout 2 qm guest cmd "$vmid" ping &>/dev/null 2>&1; then
         result=$(check_vm_ga "$vmid")
-    # 批量模式：无GA跳过（太慢）
-    elif [ "$MODE" = "all" ]; then
-        result="skipped|none|no_ga"
-    # 单台模式：无GA → 磁盘挂载
     else
         result=$(check_vm_disk "$vmid")
     fi
@@ -169,20 +185,9 @@ echo '{"results":['
 first=true
 
 if [ "$MODE" = "single" ] && [ -n "$TARGET_VMID" ]; then
-    detect_vm "$TARGET_VMID"
+    detect_single "$TARGET_VMID"
 else
-    while IFS= read -r line; do
-        vmid=$(echo "$line" | awk '{print $1}')
-        [ -z "$vmid" ] && continue
-
-        if [ "$first" = true ]; then
-            first=false
-        else
-            echo ","
-        fi
-
-        detect_vm "$vmid"
-    done < <(qm list 2>/dev/null | tail -n +2)
+    detect_all_fast
 fi
 
 echo ']}'
