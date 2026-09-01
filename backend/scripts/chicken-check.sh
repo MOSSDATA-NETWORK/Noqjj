@@ -39,8 +39,8 @@ trap cleanup EXIT
 # GA模式：进入VM内部检查
 check_vm_ga() {
     local vmid="$1"
-    local result
-    result=$(timeout "$GA_TIMEOUT" qm guest exec "$vmid" -- bash -c '
+    local raw
+    raw=$(timeout "$GA_TIMEOUT" qm guest exec "$vmid" -- bash -c '
         found=""
         [ -d /opt/incus ] && found="${found}incus_dir "
         [ -f /usr/local/bin/incushlii-agent ] && found="${found}incushlii_agent "
@@ -53,10 +53,20 @@ check_vm_ga() {
         [ "$hist" -gt 0 ] 2>/dev/null && found="${found}history:${hist} "
         net=$(ss -tnp 2>/dev/null | grep -ciE "nodeget|incushlii|ji\.778822|nodehatch" || true)
         [ "$net" -gt 0 ] 2>/dev/null && found="${found}network:${net} "
-        proc=$(ps aux 2>/dev/null | grep -ciE "incusd|incushlii|nodeget|qemu-system" | grep -v grep || true)
+        proc=$(ps aux 2>/dev/null | grep -cE "incusd|incushlii-agent|nodeget-agent" || true)
         [ "$proc" -gt 0 ] 2>/dev/null && found="${found}process:${proc} "
         [ -n "$found" ] && echo "FOUND:$found" || echo "CLEAN"
-    ' 2>/dev/null | tr -d '\r\n\t ')
+    ' 2>/dev/null)
+
+    # 从 qm guest exec 的 JSON 输出中提取 out-data
+    local result=""
+    if command -v python3 &>/dev/null; then
+        result=$(echo "$raw" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('out-data','').strip())" 2>/dev/null)
+    fi
+    # fallback: 直接 grep
+    if [ -z "$result" ]; then
+        result=$(echo "$raw" | grep -o 'FOUND:[^"]*' || echo "$raw" | grep -o 'CLEAN')
+    fi
 
     if echo "$result" | grep -q "FOUND:"; then
         echo "detected|ga|$(echo "$result" | sed 's/.*FOUND://')"
