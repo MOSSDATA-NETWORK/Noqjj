@@ -143,9 +143,9 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 if prev_detected.contains(&r.vmid) { "confirmed" } else { "detected" }
             } else if r.status == "clean" {
                 if prev_detected.contains(&r.vmid) { "cleaned" } else { "clean" }
-            } else if r.status == "skipped" && evidence == "no_guest_agent" {
-                // 无 Guest Agent，标记为待磁盘扫描
-                "needs_disk_scan"
+            } else if r.status == "skipped" {
+                // 无GA跳过（批量模式），不计入统计
+                continue;
             } else {
                 "unknown"
             };
