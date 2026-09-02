@@ -340,14 +340,26 @@ pub async fn upsert_result(pool: &SqlitePool, scan_id: i64, host_id: i64, vmid: 
     let existing = sqlx::query_as::<_, crate::db::Result>("SELECT * FROM results WHERE host_id = ? AND vmid = ? ORDER BY id DESC LIMIT 1")
         .bind(host_id).bind(vmid).fetch_optional(pool).await?;
 
+    // scan_id <= 0 表示无关联扫描（如手动单台磁盘扫描），不写该列以免违反外键
+    let has_scan = scan_id > 0;
     match existing {
         Some(r) => {
-            sqlx::query("UPDATE results SET scan_id=?, status=?, method=?, evidence=?, last_seen=CURRENT_TIMESTAMP WHERE id=?")
-                .bind(scan_id).bind(status).bind(method).bind(evidence).bind(r.id).execute(pool).await?;
+            if has_scan {
+                sqlx::query("UPDATE results SET scan_id=?, status=?, method=?, evidence=?, last_seen=CURRENT_TIMESTAMP WHERE id=?")
+                    .bind(scan_id).bind(status).bind(method).bind(evidence).bind(r.id).execute(pool).await?;
+            } else {
+                sqlx::query("UPDATE results SET status=?, method=?, evidence=?, last_seen=CURRENT_TIMESTAMP WHERE id=?")
+                    .bind(status).bind(method).bind(evidence).bind(r.id).execute(pool).await?;
+            }
         }
         None => {
-            sqlx::query("INSERT INTO results (scan_id, host_id, vmid, status, method, evidence, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
-                .bind(scan_id).bind(host_id).bind(vmid).bind(status).bind(method).bind(evidence).execute(pool).await?;
+            if has_scan {
+                sqlx::query("INSERT INTO results (scan_id, host_id, vmid, status, method, evidence, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+                    .bind(scan_id).bind(host_id).bind(vmid).bind(status).bind(method).bind(evidence).execute(pool).await?;
+            } else {
+                sqlx::query("INSERT INTO results (scan_id, host_id, vmid, status, method, evidence, first_seen, last_seen) VALUES (NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+                    .bind(host_id).bind(vmid).bind(status).bind(method).bind(evidence).execute(pool).await?;
+            }
         }
     }
     Ok(())
