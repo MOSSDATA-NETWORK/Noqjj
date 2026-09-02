@@ -104,14 +104,34 @@ async function deployAgent(id: number) {
   }
 }
 
+const notice = ref<{ ok: boolean; text: string } | null>(null)
+let noticeTimer: ReturnType<typeof setTimeout> | null = null
+function showNotice(ok: boolean, text: string) {
+  notice.value = { ok, text }
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => (notice.value = null), 6000)
+}
+
 async function scanAll() {
   scanning.value = true
-  try { await scansApi.create(); alert('扫描已启动') } finally { scanning.value = false }
+  try {
+    const res = await scansApi.create()
+    if (res.ok) showNotice(true, '扫描已启动，进入「扫描记录」可查看实时进度')
+    else showNotice(false, res.error || '扫描启动失败')
+  } catch (e: any) {
+    showNotice(false, e.response?.data?.error || '扫描启动失败')
+  } finally { scanning.value = false }
 }
 
 async function scanHost(hostId: number) {
   scanning.value = true
-  try { await scansApi.create(hostId); alert('扫描已启动') } finally { scanning.value = false }
+  try {
+    const res = await scansApi.create(hostId)
+    if (res.ok) showNotice(true, '扫描已启动，进入「扫描记录」可查看实时进度')
+    else showNotice(false, res.error || '扫描启动失败')
+  } catch (e: any) {
+    showNotice(false, e.response?.data?.error || '扫描启动失败')
+  } finally { scanning.value = false }
 }
 
 function authTypeLabel(t: string) {
@@ -176,6 +196,14 @@ function clearKey() {
         <button class="btn btn-secondary" @click="scanAll" :disabled="scanning">{{ scanning ? '扫描中...' : '扫描全部' }}</button>
         <button class="btn btn-primary" @click="openAdd">+ 添加主机</button>
       </div>
+    </div>
+
+    <!-- 操作通知条 -->
+    <div v-if="notice" style="margin-bottom: 16px; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px;"
+      :style="{ background: notice.ok ? 'rgba(52,199,89,0.08)' : 'rgba(255,59,48,0.08)', border: '1px solid ' + (notice.ok ? 'rgba(52,199,89,0.2)' : 'rgba(255,59,48,0.2)') }">
+      <span style="font-size: 18px;">{{ notice.ok ? '✅' : '❌' }}</span>
+      <span style="font-size: 14px; flex: 1;">{{ notice.text }}</span>
+      <button class="btn btn-sm btn-secondary" @click="notice = null">关闭</button>
     </div>
 
     <div class="card">

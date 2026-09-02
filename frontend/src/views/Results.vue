@@ -95,6 +95,18 @@ function parseEvidence(e: string) {
 
 const batchScanning = ref(false)
 const batchProgress = ref('')
+const diskResult = ref<{ ok: boolean; text: string } | null>(null)
+const confirmBox = ref<{ title: string; message: string; confirmText: string; action: () => void } | null>(null)
+
+function askConfirm(title: string, message: string, confirmText: string, action: () => void) {
+  confirmBox.value = { title, message, confirmText, action }
+}
+
+function runConfirm() {
+  const action = confirmBox.value?.action
+  confirmBox.value = null
+  action?.()
+}
 
 async function batchDiskScan() {
   let targets: any[] = []
@@ -103,47 +115,60 @@ async function batchDiskScan() {
     if (res.ok) targets = res.data || []
   } catch {}
   if (targets.length === 0) return
-  if (!confirm(`将对 ${targets.length} 台待检测 VM 逐台执行磁盘扫描。\n\n每台约几秒到几分钟，期间请勿关闭页面。确定开始？`)) return
-  batchScanning.value = true
-  let ok = 0
-  let fail = 0
-  for (let i = 0; i < targets.length; i++) {
-    const t = targets[i]
-    batchProgress.value = `正在扫描 VM ${t.vmid}（${i + 1}/${targets.length}）`
-    try {
-      await axios.post(`/api/hosts/${t.host_id}/scan-vm`, { vmid: t.vmid })
-      ok++
-    } catch {
-      fail++
-    }
-  }
-  batchScanning.value = false
-  batchProgress.value = ''
-  alert(`批量磁盘扫描完成：成功 ${ok} 台${fail > 0 ? `，失败 ${fail} 台` : ''}`)
-  await loadResults()
-  loadNeedsDiskCount()
+  askConfirm('批量磁盘扫描',
+    `将对 ${targets.length} 台待检测 VM 逐台执行磁盘扫描。\n每台约几秒到几分钟，期间请勿关闭页面。`,
+    '开始扫描',
+    async () => {
+      batchScanning.value = true
+      diskResult.value = null
+      let ok = 0
+      let fail = 0
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i]
+        batchProgress.value = `正在扫描 VM ${t.vmid}（${i + 1}/${targets.length}）`
+        try {
+          await axios.post(`/api/hosts/${t.host_id}/scan-vm`, { vmid: t.vmid })
+          ok++
+        } catch {
+          fail++
+        }
+      }
+      batchScanning.value = false
+      batchProgress.value = ''
+      diskResult.value = { ok: fail === 0, text: fail === 0 ? `批量磁盘扫描完成：成功 ${ok} 台` : `批量磁盘扫描完成：成功 ${ok} 台，失败 ${fail} 台` }
+      await loadResults()
+      loadNeedsDiskCount()
+    })
 }
 
 async function triggerDiskScan(vmid: string) {
-  if (!confirm(`确定要对 VM ${vmid} 执行磁盘扫描？\n\n会复制磁盘镜像并只读挂载检查，约几秒到几分钟。`)) return
-  scanningVmid.value = vmid
-  try {
-    const result = results.value.find(r => r.vmid === vmid)
-    const hostId = result?.host_id
-    if (!hostId) { alert('未找到主机信息'); return }
-    const res = await axios.post(`/api/hosts/${hostId}/scan-vm`, { vmid })
-    if (res.data.ok) {
-      alert(`VM ${vmid} 磁盘扫描完成`)
-      await loadResults()
-      loadNeedsDiskCount()
-    } else {
-      alert(res.data.error || '扫描失败')
-    }
-  } catch (e: any) {
-    alert(e.response?.data?.error || '请求失败')
-  } finally {
-    scanningVmid.value = null
-  }
+  const result = results.value.find(r => r.vmid === vmid)
+  const hostId = result?.host_id
+  askConfirm('磁盘扫描',
+    `确定对 VM ${vmid} 执行磁盘扫描？\n将只读挂载磁盘镜像逐项检查切鸡特征，约几秒到几分钟。`,
+    '开始扫描',
+    async () => {
+      scanningVmid.value = vmid
+      diskResult.value = null
+      try {
+        if (!hostId) {
+          diskResult.value = { ok: false, text: '未找到主机信息' }
+          return
+        }
+        const res = await axios.post(`/api/hosts/${hostId}/scan-vm`, { vmid })
+        if (res.data.ok) {
+          diskResult.value = { ok: true, text: `VM ${vmid} 磁盘扫描完成，结果已更新` }
+        } else {
+          diskResult.value = { ok: false, text: res.data.error || '扫描失败' }
+        }
+      } catch (e: any) {
+        diskResult.value = { ok: false, text: e.response?.data?.error || '请求失败' }
+      } finally {
+        scanningVmid.value = null
+        await loadResults()
+        loadNeedsDiskCount()
+      }
+    })
 }
 
 function getPageNumbers() {
@@ -200,6 +225,14 @@ function getPageNumbers() {
           {{ batchScanning ? '批量扫描中...' : '批量磁盘扫描' }}
         </button>
       </div>
+    </div>
+
+    <!-- 磁盘扫描结果条 -->
+    <div v-if="diskResult" style="margin-bottom: 16px; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px;"
+      :style="{ background: diskResult.ok ? 'rgba(52,199,89,0.08)' : 'rgba(255,59,48,0.08)', border: '1px solid ' + (diskResult.ok ? 'rgba(52,199,89,0.2)' : 'rgba(255,59,48,0.2)') }">
+      <span style="font-size: 18px;">{{ diskResult.ok ? '✅' : '❌' }}</span>
+      <span style="font-size: 14px; flex: 1;">{{ diskResult.text }}</span>
+      <button class="btn btn-sm btn-secondary" @click="diskResult = null">关闭</button>
     </div>
 
     <div class="card">
@@ -278,6 +311,20 @@ function getPageNumbers() {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 确认弹窗 -->
+    <div v-if="confirmBox" class="modal-overlay" @click.self="confirmBox = null">
+      <div class="modal" style="max-width: 440px;">
+        <div class="modal-header">{{ confirmBox.title }}</div>
+        <div class="modal-body">
+          <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.8; margin: 0; white-space: pre-line;">{{ confirmBox.message }}</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="confirmBox = null">取消</button>
+          <button class="btn btn-primary" @click="runConfirm">{{ confirmBox.confirmText }}</button>
         </div>
       </div>
     </div>
