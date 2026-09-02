@@ -52,11 +52,13 @@
 
 | 类型 | 路径 / 名称 |
 |------|-------------|
-| Incus 二进制 | `/opt/incus/` |
+| Incus 虚拟化 | `/opt/incus/`、`/var/lib/incus` |
 | shlii.io agent | `/usr/local/bin/incushlii-agent` |
-| NodeHatch agent | `/usr/local/bin/nodeget-agent` |
-| systemd 服务 | `incushlii-agent.service`、`nodeget-agent.service` 等 |
-| bash_history | `shlii.io`、`nodeget`、`incushlii` 关键词 |
+| NodeHatch 面板痕迹 | Incus 项目/证书名含 `NodeHatch`、zabbly 源、监听 8443 |
+| systemd 服务 | `incus*.service`、`incushlii-agent.service` 等 |
+| bash_history | `shlii.io`、`incushlii`、`nodehatch` 关键词 |
+
+> **注意**：`/usr/local/bin/nodeget-agent` 是开源监控项目 [NodeGet](https://github.com/NodeSeekDev/NodeGet) 的正常组件，不属于切鸡特征，不参与检测。
 
 ### 快速开始
 
@@ -288,11 +290,13 @@ Passkey 支持的来源：
 
 | Type | Path / Name |
 |------|-------------|
-| Incus binary | `/opt/incus/` |
+| Incus virtualization | `/opt/incus/`, `/var/lib/incus` |
 | shlii.io agent | `/usr/local/bin/incushlii-agent` |
-| NodeHatch agent | `/usr/local/bin/nodeget-agent` |
-| systemd services | `incushlii-agent.service`, `nodeget-agent.service`, etc. |
-| bash_history | `shlii.io`, `nodeget`, `incushlii` keywords |
+| NodeHatch panel traces | Incus project/cert named `NodeHatch`, zabbly repo, port 8443 |
+| systemd services | `incus*.service`, `incushlii-agent.service`, etc. |
+| bash_history | `shlii.io`, `incushlii`, `nodehatch` keywords |
+
+> **Note**: `/usr/local/bin/nodeget-agent` is a normal component of the open-source monitoring project [NodeGet](https://github.com/NodeSeekDev/NodeGet), NOT a chicken-cutting signature.
 
 ### Quick Start
 

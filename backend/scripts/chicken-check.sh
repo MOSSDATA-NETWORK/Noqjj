@@ -9,7 +9,8 @@
 # 检测原理：
 #   GA模式  : qm guest exec 进入VM检查 文件/systemd/bash_history/网络（1-3秒/台）
 #   磁盘模式: 复制磁盘→qemu-nbd只读挂载→检查文件系统（10-60秒/台，仅单台）
-# 检测特征：/opt/incus, incushlii-agent, nodeget-agent, incus/lxd服务, history关键词
+# 检测特征：/opt/incus, incushlii-agent, NodeHatch痕迹(项目/证书/zabbly源/8443), incus/lxd服务, history关键词
+# 注意：nodeget-agent 是开源监控 NodeGet(github.com/NodeSeekDev/NodeGet) 的正常组件，不属于切鸡特征
 # 输出：JSON
 
 set -uo pipefail
@@ -42,18 +43,27 @@ CHECK_B64=$(cat <<'CHECKEOF' | base64 | tr -d '\n'
 found=""
 [ -d /opt/incus ] && found="${found}incus_dir "
 [ -e /usr/local/bin/incushlii-agent ] && found="${found}incushlii_agent "
-[ -e /usr/local/bin/nodeget-agent ] && found="${found}nodeget_agent "
 [ -d /var/lib/incus ] && found="${found}incus_data "
 [ -d /var/lib/lxd ] && found="${found}lxd "
-svc=$(ls /etc/systemd/system/ 2>/dev/null | grep -ciE "incus|shlii|nodeget" || true)
+# NodeHatch（基于Incus的VPS分割面板）专属痕迹
+nh_proj=$( (incus project list 2>/dev/null || /opt/incus/bin/incus project list 2>/dev/null) | grep -ci nodehatch || true)
+[ "${nh_proj:-0}" -gt 0 ] && found="${found}nodehatch_proj "
+nh_cert=$( (incus config trust list 2>/dev/null || /opt/incus/bin/incus config trust list 2>/dev/null) | grep -ci nodehatch || true)
+[ "${nh_cert:-0}" -gt 0 ] && found="${found}nodehatch_cert "
+[ -f /etc/apt/sources.list.d/zabbly-incus-stable.sources ] && found="${found}zabbly_incus "
+# 注意：/usr/local/bin/nodeget-agent 是开源监控 NodeGet（github.com/NodeSeekDev/NodeGet）的
+# 正常组件，不是切鸡特征，不检测
+svc=$(ls /etc/systemd/system/ 2>/dev/null | grep -ciE "incus|shlii|nodehatch" || true)
 [ "${svc:-0}" -gt 0 ] && found="${found}svc:${svc} "
 for h in /root/.bash_history /home/*/.bash_history; do
   [ -f "$h" ] || continue
-  hc=$(grep -ciE "shlii\.io|incushlii|nodeget|nodehatch" "$h" 2>/dev/null || true)
+  hc=$(grep -ciE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com" "$h" 2>/dev/null || true)
   [ "${hc:-0}" -gt 0 ] && found="${found}hist:${hc} "
 done
-net=$(ss -tnp 2>/dev/null | grep -ciE "nodeget|incushlii|nodehatch" || true)
+net=$(ss -tnp 2>/dev/null | grep -ciE "incushlii|shlii|nodehatch" || true)
 [ "${net:-0}" -gt 0 ] && found="${found}net:${net} "
+l8443=$(ss -tln 2>/dev/null | grep -ciE "(:8443)\b" || true)
+[ "${l8443:-0}" -gt 0 ] && found="${found}api_8443 "
 [ -n "$found" ] && echo "FOUND:${found}" || echo "CLEAN"
 CHECKEOF
 )
@@ -139,14 +149,16 @@ check_vm_disk() {
         local found=""
         [ -d "$MOUNT_POINT/opt/incus" ] && found="${found}incus_dir "
         [ -e "$MOUNT_POINT/usr/local/bin/incushlii-agent" ] && found="${found}incushlii_agent "
-        [ -e "$MOUNT_POINT/usr/local/bin/nodeget-agent" ] && found="${found}nodeget_agent "
         [ -d "$MOUNT_POINT/var/lib/incus" ] && found="${found}incus_data "
         [ -d "$MOUNT_POINT/var/lib/lxd" ] && found="${found}lxd "
+        # NodeHatch 痕迹（zabbly 源是它 install.sh 写入的 Incus 软件源）
+        [ -f "$MOUNT_POINT/etc/apt/sources.list.d/zabbly-incus-stable.sources" ] && found="${found}zabbly_incus "
+        # nodeget-agent 是开源监控 NodeGet 的正常组件，不是切鸡特征，不检测
         local svc
-        svc=$(ls "$MOUNT_POINT/etc/systemd/system/" 2>/dev/null | grep -ciE "incus|shlii|nodeget" || true)
+        svc=$(ls "$MOUNT_POINT/etc/systemd/system/" 2>/dev/null | grep -ciE "incus|shlii|nodehatch" || true)
         [ "${svc:-0}" -gt 0 ] && found="${found}svc:${svc} "
         local hc
-        hc=$(grep -ciE "shlii\.io|incushlii|nodeget|nodehatch" "$MOUNT_POINT/root/.bash_history" 2>/dev/null || true)
+        hc=$(grep -ciE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com" "$MOUNT_POINT/root/.bash_history" 2>/dev/null || true)
         [ "${hc:-0}" -gt 0 ] && found="${found}hist:${hc} "
         umount "$MOUNT_POINT" 2>/dev/null
         if [ -n "$found" ]; then
