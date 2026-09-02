@@ -145,8 +145,10 @@ async fn main() -> anyhow::Result<()> {
                     Ok(p) => p,
                     Err(_) => {
                         // 文件不存在，返回 index.html（SPA 路由）
+                        // index.html 禁止缓存：引用带哈希的资产名，缓存旧版会导致白屏
                         return Ok(axum::response::Response::builder()
                             .header("content-type", "text/html; charset=utf-8")
+                            .header("cache-control", "no-cache, no-store, must-revalidate")
                             .body(axum::body::Body::from(index_html))
                             .unwrap());
                     }
@@ -170,8 +172,16 @@ async fn main() -> anyhow::Result<()> {
                         let mime = mime_guess::from_path(&canonical)
                             .first_or_octet_stream()
                             .to_string();
+                        // 带 hash 的 assets 永久缓存；其他文件与 index.html 相同策略禁缓存
+                        let is_hashed_asset = path.starts_with("/assets/");
+                        let cache = if is_hashed_asset {
+                            "public, max-age=31536000, immutable"
+                        } else {
+                            "no-cache, no-store, must-revalidate"
+                        };
                         return Ok(axum::response::Response::builder()
                             .header("content-type", mime)
+                            .header("cache-control", cache)
                             .body(axum::body::Body::from(content))
                             .unwrap());
                     }
@@ -180,6 +190,7 @@ async fn main() -> anyhow::Result<()> {
                 // 非文件返回 index.html
                 Ok(axum::response::Response::builder()
                     .header("content-type", "text/html; charset=utf-8")
+                    .header("cache-control", "no-cache, no-store, must-revalidate")
                     .body(axum::body::Body::from(index_html))
                     .unwrap())
             }
