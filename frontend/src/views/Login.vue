@@ -124,7 +124,7 @@ async function doPasskeyLogin() {
       <template v-if="!needsMfa">
         <div class="form-group">
           <label class="form-label">用户名</label>
-          <input class="form-input" v-model="username" placeholder="admin" @keyup.enter="doLogin" />
+          <input class="form-input" v-model="username" placeholder="请输入用户名" @keyup.enter="doLogin" />
         </div>
         <div class="form-group">
           <label class="form-label">密码</label>

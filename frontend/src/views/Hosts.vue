@@ -226,7 +226,7 @@ function clearKey() {
         <div class="modal-body">
           <div class="form-group">
             <label class="form-label">名称</label>
-            <input class="form-input" v-model="form.name" placeholder="如：tpe2-srv18" />
+            <input class="form-input" v-model="form.name" placeholder="如：pve-node1" />
           </div>
           <div class="form-group">
             <label class="form-label">IP 地址</label>

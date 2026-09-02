@@ -7,7 +7,7 @@ import { registerPasskey, isWebAuthnSupported } from '../passkey'
 
 const router = useRouter()
 const step = ref(1) // 1=创建账户, 2=Passkey注册, 3=完成
-const username = ref('admin')
+const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const loading = ref(false)
@@ -28,6 +28,11 @@ onMounted(async () => {
 })
 
 async function doSetup() {
+  const name = username.value.trim()
+  if (name.length < 2 || name.length > 32) {
+    error.value = '用户名长度需在2-32位'
+    return
+  }
   if (password.value.length < 8) {
     error.value = '密码至少8位'
     return
@@ -121,7 +126,7 @@ function finish() {
 
         <div class="form-group">
           <label class="form-label">用户名</label>
-          <input class="form-input" v-model="username" placeholder="admin" />
+          <input class="form-input" v-model="username" placeholder="请输入用户名" />
         </div>
         <div class="form-group">
           <label class="form-label">密码</label>
