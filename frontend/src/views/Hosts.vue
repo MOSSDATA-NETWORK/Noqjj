@@ -7,6 +7,7 @@ const loading = ref(true)
 const showModal = ref(false)
 const editHost = ref<any>(null)
 const form = ref({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', ssh_key_content: '', api_token: '' })
+const formError = ref('')
 const keyDragOver = ref(false)
 const keyFileInput = ref<HTMLInputElement | null>(null)
 const testing = ref<number | null>(null)
@@ -27,27 +28,49 @@ async function loadHosts() {
 
 function openAdd() {
   editHost.value = null
+  formError.value = ''
   form.value = { name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', ssh_key_content: '', api_token: '' }
   showModal.value = true
 }
 
 function openEdit(h: any) {
   editHost.value = h
+  formError.value = ''
   form.value = { name: h.name, host: h.host, port: h.port, username: h.username, auth_type: h.auth_type || 'password', password: '', ssh_key_content: '', api_token: '' }
   showModal.value = true
 }
 
 async function saveHost() {
-  if (!form.value.name || !form.value.host) return
+  formError.value = ''
+  if (!form.value.name.trim()) { formError.value = '请填写主机名称'; return }
+  if (!form.value.host.trim()) { formError.value = '请填写主机地址（IP 或域名）'; return }
+  if (!form.value.username.trim()) { formError.value = '请填写 SSH 用户名'; return }
+  const p = Number(form.value.port)
+  if (!p || p < 1 || p > 65535) { formError.value = '端口必须是 1-65535 的数字'; return }
+  if (form.value.auth_type === 'password' && !editHost.value && !form.value.password) {
+    formError.value = '密码认证方式需要填写 SSH 密码'; return
+  }
+  if (form.value.auth_type === 'ssh_key' && !editHost.value && !form.value.ssh_key_content) {
+    formError.value = '私钥认证方式需要上传或粘贴 SSH 私钥'; return
+  }
+  if (form.value.auth_type === 'api_token' && !editHost.value && !form.value.api_token) {
+    formError.value = 'API Token 认证方式需要填写 PVE API Token'; return
+  }
+
   const data: any = { ...form.value }
   if (!data.password) delete data.password
   if (!data.ssh_key_content) delete data.ssh_key_content
   if (!data.api_token) delete data.api_token
 
-  if (editHost.value) {
-    await hostsApi.update(editHost.value.id, data)
-  } else {
-    await hostsApi.create(data)
+  try {
+    if (editHost.value) {
+      await hostsApi.update(editHost.value.id, data)
+    } else {
+      await hostsApi.create(data)
+    }
+  } catch (e: any) {
+    formError.value = e.response?.data?.error || '保存失败，请检查网络或稍后重试'
+    return
   }
   showModal.value = false
   loadHosts()
@@ -207,7 +230,7 @@ function clearKey() {
           </div>
           <div class="form-group">
             <label class="form-label">IP 地址</label>
-            <input class="form-input" v-model="form.host" placeholder="78.105.182.253" />
+            <input class="form-input" v-model="form.host" placeholder="192.168.1.100 或 hv.example.com" />
           </div>
 
           <div class="form-group">
@@ -286,6 +309,12 @@ function clearKey() {
             <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
               格式：用户名@pve!token名=token值，需要在 PVE 数据中心 → API Token 中创建
             </div>
+          </div>
+        </div>
+        <div v-if="formError" style="padding: 0 20px 4px;">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;background:rgba(255,59,48,0.08);border:1px solid rgba(255,59,48,0.2);">
+            <span style="font-size:15px;">⚠️</span>
+            <span style="font-size:13px;color:var(--red);">{{ formError }}</span>
           </div>
         </div>
         <div class="modal-footer">
