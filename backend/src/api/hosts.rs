@@ -107,8 +107,12 @@ pub async fn scan_vm(State(state): State<Arc<AppState>>, Path(id): Path<i64>, Js
     match crate::deploy::run_remote_scan(&host.host, host.port as u16, &host.username, &auth, Some(&body.vmid)).await {
         Ok(output) => {
             // 解析结果并更新数据库
-            if let Ok(result) = serde_json::from_str::<serde_json::Value>(&output) {
-                if let Some(results) = result.get("results").and_then(|r| r.as_array()) {
+            tracing::info!("scan_vm {} raw output ({} bytes): {}", body.vmid, output.len(), output.chars().take(500).collect::<String>());
+            match serde_json::from_str::<serde_json::Value>(&output) {
+                Ok(result) => {
+                    let empty = vec![];
+                    let results = result.get("results").and_then(|r| r.as_array()).unwrap_or(&empty);
+                    tracing::info!("scan_vm {} parsed {} results", body.vmid, results.len());
                     for r in results {
                         let vmid = r.get("vmid").and_then(|v| v.as_str()).unwrap_or("");
                         let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
@@ -117,11 +121,15 @@ pub async fn scan_vm(State(state): State<Arc<AppState>>, Path(id): Path<i64>, Js
 
                         let db_status = if status == "detected" { "detected" }
                             else if status == "clean" { "clean" }
+                            else if status == "needs_disk_scan" { "needs_disk_scan" }
                             else { "unknown" };
 
-                        let _ = db::upsert_result(&state.db, 0, id, vmid, db_status, method, evidence).await;
+                        if let Err(e) = db::upsert_result(&state.db, 0, id, vmid, db_status, method, evidence).await {
+                            tracing::error!("scan_vm upsert failed: {}", e);
+                        }
                     }
                 }
+                Err(e) => tracing::error!("scan_vm {} parse failed: {}, raw: {}", body.vmid, e, output),
             }
             Json(json!({"ok": true, "message": format!("VM {} 磁盘扫描完成", body.vmid)}))
         }
