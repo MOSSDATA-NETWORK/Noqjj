@@ -93,6 +93,37 @@ function parseEvidence(e: string) {
   try { return JSON.parse(e).join(', ') } catch { return e }
 }
 
+const batchScanning = ref(false)
+const batchProgress = ref('')
+
+async function batchDiskScan() {
+  let targets: any[] = []
+  try {
+    const res = await resultsApi.list({ status: 'needs_disk_scan', limit: 100 })
+    if (res.ok) targets = res.data || []
+  } catch {}
+  if (targets.length === 0) return
+  if (!confirm(`将对 ${targets.length} 台待检测 VM 逐台执行磁盘扫描。\n\n每台约几秒到几分钟，期间请勿关闭页面。确定开始？`)) return
+  batchScanning.value = true
+  let ok = 0
+  let fail = 0
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i]
+    batchProgress.value = `正在扫描 VM ${t.vmid}（${i + 1}/${targets.length}）`
+    try {
+      await axios.post(`/api/hosts/${t.host_id}/scan-vm`, { vmid: t.vmid })
+      ok++
+    } catch {
+      fail++
+    }
+  }
+  batchScanning.value = false
+  batchProgress.value = ''
+  alert(`批量磁盘扫描完成：成功 ${ok} 台${fail > 0 ? `，失败 ${fail} 台` : ''}`)
+  await loadResults()
+  loadNeedsDiskCount()
+}
+
 async function triggerDiskScan(vmid: string) {
   if (!confirm(`确定要对 VM ${vmid} 执行磁盘扫描？\n\n会复制磁盘镜像并只读挂载检查，约几秒到几分钟。`)) return
   scanningVmid.value = vmid
@@ -157,14 +188,17 @@ function getPageNumbers() {
 
     <!-- 无 Guest Agent 提示条 -->
     <div v-if="needsDiskTotal > 0" class="card" style="margin-bottom: 16px; background: rgba(255,149,0,0.04); border: 1px solid rgba(255,149,0,0.15);">
-      <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
         <span style="font-size: 24px;">💾</span>
-        <div style="flex: 1;">
+        <div style="flex: 1; min-width: 200px;">
           <div style="font-weight: 600;">{{ needsDiskTotal }} 个 VM 未安装 Guest Agent</div>
           <div style="font-size: 13px; color: var(--text-secondary); margin-top: 2px;">
-            这些 VM 无法通过 GA 检测，可点击「磁盘扫描」复制磁盘镜像挂载检查
+            {{ batchScanning ? batchProgress : '这些 VM 无法通过 GA 检测，可逐台或批量执行磁盘扫描' }}
           </div>
         </div>
+        <button class="btn btn-primary" @click="batchDiskScan" :disabled="batchScanning">
+          {{ batchScanning ? '批量扫描中...' : '批量磁盘扫描' }}
+        </button>
       </div>
     </div>
 
