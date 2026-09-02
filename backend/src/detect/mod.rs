@@ -30,6 +30,14 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         None => db::list_hosts(&state.db).await?,
     };
 
+    // 跨主机累加：扫描记录的 VM 总数/统计 = 所有机器相加
+    let mut sum_total = 0i64;
+    let mut sum_ga = 0i64;
+    let mut sum_disk = 0i64;
+    let mut sum_found = 0i64;
+    let mut host_errors: Vec<String> = Vec::new();
+    let mut completed_any = false;
+
     for host in &hosts {
         tracing::info!("Scanning host {} ({})", host.name, host.host);
 
@@ -59,8 +67,13 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             .ok()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
+        // 本台主机的进度基数 = 之前主机已累计的量
+        let total_base = sum_total;
+        let ga_base = sum_ga;
+        let disk_base = sum_disk;
+        let found_base = sum_found;
         if vm_total > 0 {
-            let _ = db::update_scan_progress(&state.db, scan_id, vm_total, 0, 0, 0).await;
+            let _ = db::update_scan_progress(&state.db, scan_id, total_base + vm_total, ga_base, disk_base, found_base).await;
             tracing::info!("Scan {} host {} has {} VMs", scan_id, host.name, vm_total);
         }
 
@@ -94,6 +107,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         let (h2, p2, u2) = (host.host.clone(), host.port as u16, host.username.clone());
         let db2 = state.db.clone();
         let total_now = vm_total;
+        let (pb_total, pb_ga, pb_found) = (total_base, ga_base, found_base);
         let cat_cmd = format!("cat {}", prog_file);
         let done_poll = done.clone();
         tokio::spawn(async move {
@@ -105,7 +119,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                     let mut it = prog.split_whitespace();
                     if let (Some(n), Some(f)) = (it.next(), it.next()) {
                         if let (Ok(n), Ok(f)) = (n.parse::<i64>(), f.parse::<i64>()) {
-                            let _ = db::update_scan_progress(&db2, scan_id, total_now, n, 0, f).await;
+                            let _ = db::update_scan_progress(&db2, scan_id, pb_total + total_now, pb_ga + n, 0, pb_found + f).await;
                         }
                     }
                 }
@@ -123,18 +137,18 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             Ok(Ok(Err(e))) => {
                 tracing::error!("Scan {} host {} scan failed: {}", scan_id, host.name, e);
                 let _ = db::update_host_status(&state.db, host.id, "error").await;
-                let _ = db::fail_scan(&state.db, scan_id, &format!("扫描失败: {}", e)).await;
+                host_errors.push(format!("{}: 扫描失败({})", host.name, e));
                 continue;
             }
             Ok(Err(e)) => {
                 tracing::error!("Scan {} host {} scan task join error: {}", scan_id, host.name, e);
-                let _ = db::fail_scan(&state.db, scan_id, "扫描任务异常").await;
+                host_errors.push(format!("{}: 扫描任务异常", host.name));
                 continue;
             }
             Err(_) => {
                 tracing::error!("Scan {} host {} scan timed out after 15 minutes", scan_id, host.name);
                 let _ = db::update_host_status(&state.db, host.id, "error").await;
-                let _ = db::fail_scan(&state.db, scan_id, "扫描超时（15分钟）").await;
+                host_errors.push(format!("{}: 扫描超时(15分钟)", host.name));
                 continue;
             }
         };
@@ -160,7 +174,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             Ok(o) => o,
             Err(e) => {
                 tracing::error!("Scan {} host {} output parse failed: {}, raw: {}", scan_id, host.name, e, output);
-                let _ = db::fail_scan(&state.db, scan_id, &format!("脚本输出解析失败: {}", e)).await;
+                host_errors.push(format!("{}: 脚本输出解析失败({})", host.name, e));
                 continue;
             }
         };
@@ -181,8 +195,8 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
 
         let mut current_detected = std::collections::HashSet::new();
 
-        // 更新 VM 总数（进度反馈）
-        let _ = db::update_scan_progress(&state.db, scan_id, total, 0, 0, 0).await;
+        // 更新 VM 总数（进度反馈，含之前主机累计）
+        let _ = db::update_scan_progress(&state.db, scan_id, total_base + total, ga_base, disk_base, found_base).await;
 
         for (i, r) in script_output.results.iter().enumerate() {
             // 检查是否被用户停止
@@ -235,9 +249,9 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 crate::notify::send_all(&state.db, &state.master_key, status, &host.name, &r.vmid, &ev.join(" ")).await;
             }
 
-            // 每处理5个VM更新一次进度
+            // 每处理5个VM更新一次进度（含之前主机累计）
             if (i + 1) % 5 == 0 || i + 1 == total as usize {
-                let _ = db::update_scan_progress(&state.db, scan_id, total, ga_count, disk_count, found_count).await;
+                let _ = db::update_scan_progress(&state.db, scan_id, total_base + total, ga_base + ga_count, disk_base + disk_count, found_base + found_count).await;
             }
         }
 
@@ -249,10 +263,29 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             }
         }
 
-        db::complete_scan(&state.db, scan_id, total, ga_count, disk_count, found_count).await?;
+        // 累加本台主机统计，扫描记录写入"所有机器相加"的总量
+        sum_total += total;
+        sum_ga += ga_count;
+        sum_disk += disk_count;
+        sum_found += found_count;
+        completed_any = true;
+
+        db::complete_scan(&state.db, scan_id, sum_total, sum_ga, sum_disk, sum_found).await?;
         let _ = db::update_host_status(&state.db, host.id, "online").await;
 
-        tracing::info!("Host {} scan complete: {} VMs, {} found", host.name, total, found_count);
+        tracing::info!("Host {} scan complete: {} VMs, {} found (累计 {} VMs)", host.name, total, found_count, sum_total);
+    }
+
+    // 所有主机都失败 → 标记失败；部分失败 → completed 但记录错误
+    if !completed_any {
+        let msg = if host_errors.is_empty() { "没有可扫描的主机" } else { &host_errors.join("; ") };
+        let _ = db::fail_scan(&state.db, scan_id, msg).await;
+    } else if !host_errors.is_empty() {
+        let _ = sqlx::query("UPDATE scans SET error=? WHERE id=?")
+            .bind(format!("部分主机失败: {}", host_errors.join("; ")))
+            .bind(scan_id)
+            .execute(&state.db)
+            .await;
     }
 
     Ok(())
