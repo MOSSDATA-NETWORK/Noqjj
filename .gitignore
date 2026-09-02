@@ -6,8 +6,8 @@ backend/Cargo.lock
 frontend/node_modules/
 frontend/dist/
 
-# Built static files
-backend/static/assets/
+# 构建产物 backend/static/assets/ 需要随仓库分发（服务器 git pull 后直接部署，
+# 不在服务器上跑 npm build），因此不忽略。本地构建后记得 git add -A。
 
 # Database
 *.db
