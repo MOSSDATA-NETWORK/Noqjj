@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
         --disk) FORCE_DISK=true; shift ;;
         --oneline) ONELINE=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
-        --version) echo "4"; exit 0 ;;
+        --version) echo "5"; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -44,7 +44,14 @@ found=""
 [ -d /opt/incus ] && found="${found}incus_dir "
 [ -e /usr/local/bin/incushlii-agent ] && found="${found}incushlii_agent "
 [ -d /var/lib/incus ] && found="${found}incus_data "
-[ -d /var/lib/lxd ] && found="${found}lxd "
+# LXD 需有运营痕迹才计: 已init(lxd.db/database)或有容器/存储池
+# (Debian 12 apt装lxd未init时也有/var/lib/lxd目录, 纯目录不算切鸡)
+lxd_used=""
+[ -f /var/lib/lxd/lxd.db ] && lxd_used=1
+[ -d /var/lib/lxd/database ] && lxd_used=1
+ls /var/lib/lxd/containers 2>/dev/null | grep -q . && lxd_used=1
+ls /var/lib/lxd/disks 2>/dev/null | grep -q . && lxd_used=1
+[ -n "$lxd_used" ] && found="${found}lxd "
 # NodeHatch（基于Incus的VPS分割面板）专属痕迹
 nh_proj=$( (incus project list 2>/dev/null || /opt/incus/bin/incus project list 2>/dev/null) | grep -ci nodehatch || true)
 [ "${nh_proj:-0}" -gt 0 ] && found="${found}nodehatch_proj "
@@ -151,7 +158,13 @@ check_vm_disk() {
         [ -d "$MOUNT_POINT/opt/incus" ] && found="${found}incus_dir "
         [ -e "$MOUNT_POINT/usr/local/bin/incushlii-agent" ] && found="${found}incushlii_agent "
         [ -d "$MOUNT_POINT/var/lib/incus" ] && found="${found}incus_data "
-        [ -d "$MOUNT_POINT/var/lib/lxd" ] && found="${found}lxd "
+        # LXD 需有运营痕迹才计: 已init或有容器/存储池(纯目录是Debian闲置包, 不算)
+        lxd_used=""
+        [ -f "$MOUNT_POINT/var/lib/lxd/lxd.db" ] && lxd_used=1
+        [ -d "$MOUNT_POINT/var/lib/lxd/database" ] && lxd_used=1
+        ls "$MOUNT_POINT/var/lib/lxd/containers" 2>/dev/null | grep -q . && lxd_used=1
+        ls "$MOUNT_POINT/var/lib/lxd/disks" 2>/dev/null | grep -q . && lxd_used=1
+        [ -n "$lxd_used" ] && found="${found}lxd "
         # NodeHatch 痕迹（zabbly 源是它 install.sh 写入的 Incus 软件源）
         [ -f "$MOUNT_POINT/etc/apt/sources.list.d/zabbly-incus-stable.sources" ] && found="${found}zabbly_incus "
         # nodeget-agent 是开源监控 NodeGet 的正常组件，不是切鸡特征，不检测
