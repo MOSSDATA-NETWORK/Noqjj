@@ -172,7 +172,7 @@ async function testNotifications() {
 }
 
 function levelLabel(l: string) {
-  const m: Record<string, string> = { all: '全部通知', detected_only: '仅新发现', detected_and_cleaned: '新发现 + 已清除' }
+  const m: Record<string, string> = { all: '全部通知', detected_only: '仅新发现', detected_and_cleaned: '新发现 + 已清除', detected_and_confirmed: '新发现 + 持续发现' }
   return m[l] || l
 }
 
@@ -565,6 +565,7 @@ async function deletePasskey() {
               <option value="all">全部通知</option>
               <option value="detected_only">仅新发现</option>
               <option value="detected_and_cleaned">新发现 + 已清除</option>
+              <option value="detected_and_confirmed">新发现 + 持续发现</option>
             </select>
           </div>
         </div>

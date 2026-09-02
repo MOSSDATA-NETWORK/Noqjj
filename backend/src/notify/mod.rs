@@ -85,6 +85,7 @@ pub async fn send_all(pool: &SqlitePool, master_key: &[u8], status: &str, host_n
         match n.notify_level.as_str() {
             "detected_only" if status != "detected" => continue,
             "detected_and_cleaned" if status == "confirmed" => continue,
+            "detected_and_confirmed" if status == "cleaned" => continue,
             _ => {}
         }
 
