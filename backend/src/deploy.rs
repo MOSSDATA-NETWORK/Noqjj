@@ -239,7 +239,8 @@ pub async fn deploy_script(host: &str, port: u16, user: &str, auth: &SshAuth) ->
 /// 远程执行检测
 pub async fn run_remote_scan(host: &str, port: u16, user: &str, auth: &SshAuth, vmid: Option<&str>) -> anyhow::Result<String> {
     let cmd = match vmid {
-        Some(id) => format!("chicken-check --vmid {}", id),
+        // 单台扫描由「磁盘扫描」按钮触发，强制磁盘挂载模式（GA被禁/无GA都能查）
+        Some(id) => format!("chicken-check --vmid {} --disk", id),
         None => "chicken-check --all".to_string(),
     };
     let result = ssh_exec(host, port, user, auth, &cmd).await?;

@@ -77,7 +77,8 @@ check_vm_ga() {
     elif echo "$out" | grep -q "CLEAN"; then
         echo "clean|ga|"
     else
-        echo "error|ga|exec_failed"
+        # GA在线但exec被禁用/超时（如管理员策略）→ 归为待检测，走磁盘扫描
+        echo "needs_disk_scan|ga|ga_exec_disabled"
     fi
 }
 
