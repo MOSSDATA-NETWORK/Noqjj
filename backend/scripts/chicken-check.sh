@@ -62,7 +62,8 @@ for h in /root/.bash_history /home/*/.bash_history; do
 done
 net=$(ss -tnp 2>/dev/null | grep -ciE "incushlii|shlii|nodehatch" || true)
 [ "${net:-0}" -gt 0 ] && found="${found}net:${net} "
-l8443=$(ss -tln 2>/dev/null | grep -ciE "(:8443)\b" || true)
+# 8443 只有在 incusd 进程监听时才算特征（其他软件也常用8443，避免误报）
+l8443=$(ss -tlnp 2>/dev/null | grep ':8443' | grep -ci incusd || true)
 [ "${l8443:-0}" -gt 0 ] && found="${found}api_8443 "
 [ -n "$found" ] && echo "FOUND:${found}" || echo "CLEAN"
 CHECKEOF
