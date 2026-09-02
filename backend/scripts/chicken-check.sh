@@ -114,8 +114,22 @@ check_vm_disk() {
 
     mkdir -p "$MOUNT_POINT"
     local mounted=0 part
-    for part in nbd1p5 nbd1p2 nbd1p1 nbd1p3 nbd1; do
-        if mount -o ro,noload "/dev/$part" "$MOUNT_POINT" 2>/dev/null; then
+    # 按文件系统类型选挂载参数：ext 系列用 noload，XFS 用 norecovery（noload 会报错）
+    for part in nbd1p2 nbd1p5 nbd1p3 nbd1p1 nbd1; do
+        local fstype
+        fstype=$(blkid -s TYPE -o value "/dev/$part" 2>/dev/null)
+        [ -z "$fstype" ] && continue
+        local mopts="ro"
+        case "$fstype" in
+            ext2|ext3|ext4) mopts="ro,noload" ;;
+            xfs)            mopts="ro,norecovery" ;;
+            btrfs)          mopts="ro" ;;
+        esac
+        if mount -o "$mopts" "/dev/$part" "$MOUNT_POINT" 2>/dev/null; then
+            mounted=1; break
+        fi
+        # 兜底：纯只读再试一次
+        if mount -o ro "/dev/$part" "$MOUNT_POINT" 2>/dev/null; then
             mounted=1; break
         fi
     done
