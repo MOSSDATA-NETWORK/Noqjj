@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
         --disk) FORCE_DISK=true; shift ;;
         --oneline) ONELINE=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
-        --version) echo "5"; exit 0 ;;
+        --version) echo "6"; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -61,18 +61,26 @@ nh_cert=$( (incus config trust list 2>/dev/null || /opt/incus/bin/incus config t
 # 注意：/usr/local/bin/nodeget-agent 是开源监控 NodeGet（github.com/NodeSeekDev/NodeGet）的
 # 正常组件，不是切鸡特征，不检测
 svc=$(ls /etc/systemd/system/ 2>/dev/null | grep -ciE "incus|shlii|nodehatch" || true)
-[ "${svc:-0}" -gt 0 ] && found="${found}svc:${svc} "
+det=""
+# 明细段(##key=item1|item2)：随数量一起上报具体命中的服务名/命令/连接，供平台详情展示
+# 清洗: 去掉引号/反斜杠/#/|(会破坏提取与分段), 历史命令截断100字符
+[ "${svc:-0}" -gt 0 ] && found="${found}svc:${svc} " \
+  && det="##svc=$(ls /etc/systemd/system/ 2>/dev/null | grep -iE "incus|shlii|nodehatch" | sed 's/["\\#|,]/ /g' | tr '\n' ',' | sed 's/,$//')"
 for h in /root/.bash_history /home/*/.bash_history; do
   [ -f "$h" ] || continue
   hc=$(grep -ciE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com" "$h" 2>/dev/null || true)
-  [ "${hc:-0}" -gt 0 ] && found="${found}hist:${hc} "
+  [ "${hc:-0}" -gt 0 ] && found="${found}hist:${hc} " \
+    && det="${det}##hist=$(grep -ihE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com" "$h" 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
 done
-net=$(ss -tnp 2>/dev/null | grep -ciE "incushlii|shlii|nodehatch" || true)
-[ "${net:-0}" -gt 0 ] && found="${found}net:${net} "
+# 网络连接是瞬态的：一次采样，计数与明细同源，避免两次ss之间连接断开导致计数有明细无
+net_lines=$(ss -tnp 2>/dev/null | grep -iE "incushlii|shlii|nodehatch")
+net=$(echo "$net_lines" | grep -c .)
+[ "${net:-0}" -gt 0 ] && found="${found}net:${net} " \
+  && det="${det}##net=$(echo "$net_lines" | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
 # 8443 只有在 incusd 进程监听时才算特征（其他软件也常用8443，避免误报）
 l8443=$(ss -tlnp 2>/dev/null | grep ':8443' | grep -ci incusd || true)
 [ "${l8443:-0}" -gt 0 ] && found="${found}api_8443 "
-[ -n "$found" ] && echo "FOUND:${found}" || echo "CLEAN"
+[ -n "$found" ] && echo "FOUND:${found}${det}" || echo "CLEAN"
 CHECKEOF
 )
 
@@ -170,13 +178,16 @@ check_vm_disk() {
         # nodeget-agent 是开源监控 NodeGet 的正常组件，不是切鸡特征，不检测
         local svc
         svc=$(ls "$MOUNT_POINT/etc/systemd/system/" 2>/dev/null | grep -ciE "incus|shlii|nodehatch" || true)
-        [ "${svc:-0}" -gt 0 ] && found="${found}svc:${svc} "
+        local det=""
+        [ "${svc:-0}" -gt 0 ] && found="${found}svc:${svc} " \
+          && det="##svc=$(ls "$MOUNT_POINT/etc/systemd/system/" 2>/dev/null | grep -iE "incus|shlii|nodehatch" | sed 's/["\\#|,]/ /g' | tr '\n' ',' | sed 's/,$//')"
         local hc
         hc=$(grep -ciE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com" "$MOUNT_POINT/root/.bash_history" 2>/dev/null || true)
-        [ "${hc:-0}" -gt 0 ] && found="${found}hist:${hc} "
+        [ "${hc:-0}" -gt 0 ] && found="${found}hist:${hc} " \
+          && det="${det}##hist=$(grep -ihE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com" "$MOUNT_POINT/root/.bash_history" 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
         umount "$MOUNT_POINT" 2>/dev/null
         if [ -n "$found" ]; then
-            result="detected|disk|${found% }"
+            result="detected|disk|${found% }${det}"
         else
             result="clean|disk|"
         fi

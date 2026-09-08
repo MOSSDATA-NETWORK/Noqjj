@@ -245,7 +245,9 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             db::upsert_result(&state.db, scan_id, host.id, &r.vmid, status, &r.method, evidence).await?;
 
             if status == "detected" || status == "cleaned" {
-                let ev: Vec<String> = evidence.split_whitespace().map(|s| s.to_string()).collect();
+                // 通知里去掉 ## 明细段（服务名/命令等），只发证据代码
+                let ev_head = evidence.split("##").next().unwrap_or(evidence);
+                let ev: Vec<String> = ev_head.split_whitespace().map(|s| s.to_string()).collect();
                 crate::notify::send_all(&state.db, &state.master_key, status, &host.name, &r.vmid, &ev.join(" ")).await;
             }
 

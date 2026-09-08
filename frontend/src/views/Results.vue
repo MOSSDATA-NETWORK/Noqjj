@@ -102,19 +102,31 @@ const EVIDENCE_FIXED: Record<string, { label: string; desc: string }> = {
   vm_stopped: { label: '已关机', desc: '检测时该 VM 处于关机状态，未执行检测' },
 }
 
-interface EvidenceItem { raw: string; label: string; desc: string }
+interface EvidenceItem { raw: string; label: string; desc: string; items?: string[] }
 
-// 把后端证据串（如 "svc:8 hist:1 net:1"）转成中文条目列表
+// 把后端证据串转成中文条目列表。
+// 格式: "svc:8 hist:1 net:1##svc=名1|名2##hist=命令##net=连接"
+// '##' 后是明细段（检测脚本 v6 起上报），旧数据无明细段则只显示数量
 function evidenceItems(e: string | null | undefined): EvidenceItem[] {
-  const s = (e || '').trim()
-  if (!s) return []
-  return s.split(/\s+/).map((t): EvidenceItem => {
+  const parts = (e || '').split('##')
+  const head = (parts.shift() || '').trim()
+  if (!head) return []
+  const detailMap: Record<string, string[]> = {}
+  for (const sec of parts) {
+    const i = sec.indexOf('=')
+    if (i <= 0) continue
+    const key = sec.slice(0, i)
+    const vals = sec.slice(i + 1).split(',').map(s => s.trim()).filter(Boolean)
+    detailMap[key] = [...(detailMap[key] || []), ...vals]
+  }
+  return head.split(/\s+/).map((t): EvidenceItem => {
     const m = t.match(/^(svc|hist|net):(\d+)$/)
     if (m) {
       const n = Number(m[2])
-      if (m[1] === 'svc') return { raw: t, label: `可疑系统服务 × ${n}`, desc: `在 /etc/systemd/system/ 下发现 ${n} 个名称含 incus / shlii / nodehatch 的服务文件——安装了切鸡或机场相关服务` }
-      if (m[1] === 'hist') return { raw: t, label: `可疑命令历史 × ${n}`, desc: `bash 历史中有 ${n} 条与 shlii.io / incushlii / nodehatch 相关的命令——执行过安装或管理操作` }
-      return { raw: t, label: `可疑网络连接 × ${n}`, desc: `当前有 ${n} 条由可疑进程发起的网络连接——切鸡 / 机场程序正在联网运行` }
+      const items = detailMap[m[1]]
+      if (m[1] === 'svc') return { raw: t, label: `可疑系统服务 × ${n}`, desc: `在 /etc/systemd/system/ 下发现 ${n} 个名称含 incus / shlii / nodehatch 的服务文件——安装了切鸡或机场相关服务`, items }
+      if (m[1] === 'hist') return { raw: t, label: `可疑命令历史 × ${n}`, desc: `bash 历史中有 ${n} 条与 shlii.io / incushlii / nodehatch 相关的命令——执行过安装或管理操作`, items }
+      return { raw: t, label: `可疑网络连接 × ${n}`, desc: `当前有 ${n} 条由可疑进程发起的网络连接——切鸡 / 机场程序正在联网运行`, items }
     }
     const fixed = EVIDENCE_FIXED[t]
     return fixed ? { raw: t, ...fixed } : { raw: t, label: t, desc: '' }
@@ -385,6 +397,10 @@ function getPageNumbers() {
               <div style="font-size: 13px; color: var(--text-secondary); margin-top: 3px; line-height: 1.6;">
                 {{ t.desc || ('原始证据：' + t.raw) }}
               </div>
+              <ul v-if="t.items && t.items.length" style="margin: 6px 0 0; padding-left: 18px;">
+                <li v-for="(it, i) in t.items" :key="i"
+                  style="font-size: 12.5px; color: var(--text-secondary); line-height: 1.7; word-break: break-all;">{{ it }}</li>
+              </ul>
             </div>
           </div>
           <p v-else style="color: var(--text-secondary); font-size: 14px; margin: 0;">没有命中任何切鸡特征。</p>
