@@ -89,9 +89,44 @@ function statusLabel(s: string) {
   return m[s] || s
 }
 
-function parseEvidence(e: string) {
-  try { return JSON.parse(e).join(', ') } catch { return e }
+// 证据代码 → 中文说明（与后端 chicken-check.sh 的输出一一对应）
+const EVIDENCE_FIXED: Record<string, { label: string; desc: string }> = {
+  incus_dir: { label: 'Incus 切鸡目录', desc: '存在 /opt/incus 目录——安装了 Incus 容器系统，是切小鸡的核心组件' },
+  incus_data: { label: 'Incus 数据目录', desc: '存在 /var/lib/incus——Incus 已初始化并实际使用过' },
+  incushlii_agent: { label: 'incushlii 管理程序', desc: '存在 /usr/local/bin/incushlii-agent——shlii 平台的切鸡管理程序' },
+  lxd: { label: 'LXD 运营痕迹', desc: 'LXD 已初始化（lxd.db / database / 非空容器或磁盘）——在用 LXD 分割实例' },
+  nodehatch_proj: { label: 'NodeHatch 面板项目', desc: 'Incus 中存在 NodeHatch 切鸡面板创建的项目' },
+  nodehatch_cert: { label: 'NodeHatch 面板证书', desc: 'Incus 信任证书中存在 NodeHatch 面板的证书' },
+  zabbly_incus: { label: 'zabbly 软件源', desc: '配置了 zabbly 的 Incus 安装源——专门用于装 Incus 切鸡' },
+  api_8443: { label: 'Incus 管理端口', desc: 'incusd 进程正在监听 8443 管理端口' },
+  vm_stopped: { label: '已关机', desc: '检测时该 VM 处于关机状态，未执行检测' },
 }
+
+interface EvidenceItem { raw: string; label: string; desc: string }
+
+// 把后端证据串（如 "svc:8 hist:1 net:1"）转成中文条目列表
+function evidenceItems(e: string | null | undefined): EvidenceItem[] {
+  const s = (e || '').trim()
+  if (!s) return []
+  return s.split(/\s+/).map((t): EvidenceItem => {
+    const m = t.match(/^(svc|hist|net):(\d+)$/)
+    if (m) {
+      const n = Number(m[2])
+      if (m[1] === 'svc') return { raw: t, label: `可疑系统服务 × ${n}`, desc: `在 /etc/systemd/system/ 下发现 ${n} 个名称含 incus / shlii / nodehatch 的服务文件——安装了切鸡或机场相关服务` }
+      if (m[1] === 'hist') return { raw: t, label: `可疑命令历史 × ${n}`, desc: `bash 历史中有 ${n} 条与 shlii.io / incushlii / nodehatch 相关的命令——执行过安装或管理操作` }
+      return { raw: t, label: `可疑网络连接 × ${n}`, desc: `当前有 ${n} 条由可疑进程发起的网络连接——切鸡 / 机场程序正在联网运行` }
+    }
+    const fixed = EVIDENCE_FIXED[t]
+    return fixed ? { raw: t, ...fixed } : { raw: t, label: t, desc: '' }
+  })
+}
+
+function methodLabel(m: string | null | undefined) {
+  const map: Record<string, string> = { ga: 'GA 内部检测', disk: '磁盘扫描' }
+  return map[m || ''] || m || '-'
+}
+
+const detailRow = ref<any>(null)
 
 const batchScanning = ref(false)
 const batchProgress = ref('')
@@ -263,8 +298,12 @@ function getPageNumbers() {
                 <td>{{ hostMap[r.host_id] || `#${r.host_id}` }}</td>
                 <td><span :class="['badge', statusBadge(r.status)]">{{ statusLabel(r.status) }}</span></td>
                 <td><code style="font-size: 12px;">{{ r.method || '-' }}</code></td>
-                <td style="font-size: 13px; max-width: 300px; word-break: break-all;">
-                  {{ parseEvidence(r.evidence || '[]') || '-' }}
+                <td style="font-size: 13px; max-width: 300px;">
+                  <div v-if="evidenceItems(r.evidence).length" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                    <span v-for="t in evidenceItems(r.evidence)" :key="t.raw" class="evidence-tag">{{ t.label }}</span>
+                    <button class="btn btn-sm btn-secondary" @click="detailRow = r">详情</button>
+                  </div>
+                  <span v-else style="color: var(--text-tertiary);">-</span>
                 </td>
                 <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(r.first_seen) }}</td>
                 <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(r.last_seen) }}</td>
@@ -328,10 +367,47 @@ function getPageNumbers() {
         </div>
       </div>
     </div>
+
+    <!-- 检测详情弹窗 -->
+    <div v-if="detailRow" class="modal-overlay" @click.self="detailRow = null">
+      <div class="modal" style="max-width: 560px;">
+        <div class="modal-header">VM {{ detailRow.vmid }} 检测详情</div>
+        <div class="modal-body">
+          <div style="display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 14px; font-size: 13px; color: var(--text-secondary);">
+            <span>状态：<b style="color: var(--text);">{{ statusLabel(detailRow.status) }}</b></span>
+            <span>检测方式：{{ methodLabel(detailRow.method) }}</span>
+            <span>主机：{{ hostMap[detailRow.host_id] || `#${detailRow.host_id}` }}</span>
+          </div>
+          <div v-if="evidenceItems(detailRow.evidence).length">
+            <div v-for="t in evidenceItems(detailRow.evidence)" :key="t.raw"
+              style="padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px;">
+              <div style="font-weight: 600; font-size: 14px;">{{ t.label }}</div>
+              <div style="font-size: 13px; color: var(--text-secondary); margin-top: 3px; line-height: 1.6;">
+                {{ t.desc || ('原始证据：' + t.raw) }}
+              </div>
+            </div>
+          </div>
+          <p v-else style="color: var(--text-secondary); font-size: 14px; margin: 0;">没有命中任何切鸡特征。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="detailRow = null">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.evidence-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(255, 59, 48, 0.08);
+  color: var(--red);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+  white-space: nowrap;
+}
 .pagination {
   display: flex;
   align-items: center;
