@@ -140,6 +140,20 @@ function methodLabel(m: string | null | undefined) {
 }
 
 const detailRow = ref<any>(null)
+const detailHistory = ref<any[]>([])
+const historyLoading = ref(false)
+
+async function openDetail(r: any) {
+  detailRow.value = r
+  detailHistory.value = []
+  historyLoading.value = true
+  try {
+    const res = await resultsApi.history(r.id)
+    if (res.ok) detailHistory.value = res.data || []
+  } catch {} finally {
+    historyLoading.value = false
+  }
+}
 
 const batchScanning = ref(false)
 const batchProgress = ref('')
@@ -314,7 +328,7 @@ function getPageNumbers() {
                 <td style="font-size: 13px; max-width: 300px;">
                   <div v-if="evidenceItems(r.evidence).length" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                     <span v-for="t in evidenceItems(r.evidence)" :key="t.raw" class="evidence-tag">{{ t.label }}</span>
-                    <button class="btn btn-sm btn-secondary" @click="detailRow = r">详情</button>
+                    <button class="btn btn-sm btn-secondary" @click="openDetail(r)">详情</button>
                   </div>
                   <span v-else style="color: var(--text-tertiary);">-</span>
                 </td>
@@ -405,6 +419,24 @@ function getPageNumbers() {
             </div>
           </div>
           <p v-else style="color: var(--text-secondary); font-size: 14px; margin: 0;">没有命中任何切鸡特征。</p>
+
+          <!-- 状态变迁历史（新发现/已清除/再次发现，含每次的证据快照） -->
+          <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px;">
+            <div style="font-weight: 600; font-size: 14px; margin-bottom: 10px;">历史记录</div>
+            <div v-if="historyLoading" style="color: var(--text-tertiary); font-size: 13px;">加载中...</div>
+            <div v-else-if="!detailHistory.length" style="color: var(--text-tertiary); font-size: 13px;">暂无历史记录</div>
+            <div v-else style="max-height: 260px; overflow-y: auto;">
+              <div v-for="h in detailHistory" :key="h.id"
+                style="display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px;">
+                <span style="color: var(--text-secondary); white-space: nowrap;">{{ formatTime(h.created_at) }}</span>
+                <span :class="['badge', statusBadge(h.status)]" style="flex-shrink: 0;">{{ statusLabel(h.status) }}</span>
+                <span style="color: var(--text-tertiary); white-space: nowrap;">{{ methodLabel(h.method) }}</span>
+                <span style="display: flex; flex-wrap: wrap; gap: 4px;">
+                  <span v-for="t in evidenceItems(h.evidence)" :key="t.raw" class="evidence-tag">{{ t.label }}</span>
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="detailRow = null">关闭</button>
