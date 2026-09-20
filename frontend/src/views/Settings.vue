@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { notificationsApi, versionApi, passkeyApi } from '../api'
+import { notificationsApi, versionApi, passkeyApi, hostsApi, schedulesApi } from '../api'
 import { registerPasskey, isWebAuthnSupported } from '../passkey'
 import axios from 'axios'
 import { marked } from 'marked'
@@ -51,9 +51,97 @@ const passkeySupported = ref(false)
 const passkeyLoading = ref(false)
 const passkeyRegistered = ref(false)
 
+// ---- 定时扫描 ----
+const schedules = ref<any[]>([])
+const schedHosts = ref<any[]>([])
+const showSchedModal = ref(false)
+const schedSaving = ref(false)
+const schedError = ref('')
+const schedForm = ref({ host_id: null as number | null, freq: 'daily', time: '03:00', weekday: 1, cron: '' })
+
+function buildCron(): string {
+  const f = schedForm.value
+  const [hh, mm] = (f.time || '03:00').split(':')
+  const minute = String(parseInt(mm || '0', 10))
+  const hour = String(parseInt(hh || '3', 10))
+  if (f.freq === 'hourly') return `${minute} * * * *`
+  if (f.freq === 'weekly') return `${minute} ${hour} * * ${f.weekday}`
+  if (f.freq === 'custom') return f.cron.trim()
+  return `${minute} ${hour} * * *`
+}
+
+function scheduleDesc(s: any): string {
+  return s.cron_expr
+}
+
+async function loadSchedules() {
+  try {
+    const res = await schedulesApi.list()
+    if (res.ok) schedules.value = res.data || []
+  } catch {}
+  try {
+    const h = await hostsApi.list()
+    if (h.ok) schedHosts.value = h.data || []
+  } catch {}
+}
+
+function schedHostName(s: any): string {
+  if (!s.host_id) return '全部主机'
+  const h = schedHosts.value.find((x: any) => x.id === s.host_id)
+  return h ? h.name : `#${s.host_id}`
+}
+
+function openScheduleModal() {
+  schedForm.value = { host_id: null, freq: 'daily', time: '03:00', weekday: 1, cron: '' }
+  schedError.value = ''
+  showSchedModal.value = true
+}
+
+async function saveSchedule() {
+  const cron = buildCron()
+  if (!cron) { schedError.value = '请填写 cron 表达式'; return }
+  schedSaving.value = true
+  schedError.value = ''
+  try {
+    const res = await schedulesApi.create({ host_id: schedForm.value.host_id, cron_expr: cron, enabled: true })
+    if (res.ok) {
+      showSchedModal.value = false
+      await loadSchedules()
+    } else {
+      schedError.value = res.error || '保存失败'
+    }
+  } catch (e: any) {
+    schedError.value = e.response?.data?.error || '请求失败'
+  } finally {
+    schedSaving.value = false
+  }
+}
+
+async function toggleSchedule(s: any) {
+  await schedulesApi.update(s.id, { enabled: !s.enabled })
+  await loadSchedules()
+}
+
+async function runSchedule(s: any) {
+  const res = await schedulesApi.run(s.id)
+  if (res.ok) {
+    alert('扫描已启动，可在「扫描记录」页查看进度')
+    await loadSchedules()
+  } else {
+    alert(res.error || '启动失败')
+  }
+}
+
+async function deleteSchedule(s: any) {
+  if (!confirm(`确定删除定时扫描（${s.cron_expr}）？`)) return
+  await schedulesApi.delete(s.id)
+  await loadSchedules()
+}
+
 onMounted(async () => {
   loadNotifications()
   loadVersion()
+  loadSchedules()
   passkeySupported.value = isWebAuthnSupported()
   checkPasskeyStatus()
 })
@@ -481,6 +569,103 @@ async function deletePasskey() {
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="showChangelog = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Schedule Section -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin: 28px 0 16px;">
+      <h2 style="font-size: 20px; font-weight: 600;">定时扫描</h2>
+      <button class="btn btn-primary" @click="openScheduleModal()">+ 添加定时扫描</button>
+    </div>
+
+    <div class="card">
+      <div v-if="schedules.length === 0" class="empty-state">
+        <p>暂无定时扫描任务</p>
+        <p style="font-size: 13px; color: var(--text-tertiary);">添加后系统将按设定的频率自动扫描主机</p>
+      </div>
+      <div v-else class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>主机</th>
+              <th>频率（cron）</th>
+              <th>上次执行</th>
+              <th>下次执行</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in schedules" :key="s.id">
+              <td style="font-weight: 500;">{{ schedHostName(s) }}</td>
+              <td><code style="font-size: 12px;">{{ scheduleDesc(s) }}</code></td>
+              <td style="font-size: 13px; color: var(--text-secondary);">{{ s.last_run ? formatTime(s.last_run) : '从未执行' }}</td>
+              <td style="font-size: 13px; color: var(--text-secondary);">{{ s.enabled && s.next_run ? formatTime(s.next_run) : '-' }}</td>
+              <td>
+                <span :class="['badge', s.enabled ? 'badge-online' : 'badge-unknown']" style="cursor: pointer;" @click="toggleSchedule(s)">
+                  {{ s.enabled ? '已启用' : '已停用' }}
+                </span>
+              </td>
+              <td>
+                <div style="display: flex; gap: 8px;">
+                  <button class="btn btn-sm btn-secondary" @click="runSchedule(s)">立即执行</button>
+                  <button class="btn btn-sm btn-secondary" style="color: var(--red);" @click="deleteSchedule(s)">删除</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Schedule Modal -->
+    <div v-if="showSchedModal" class="modal-overlay" @click.self="showSchedModal = false">
+      <div class="modal" style="max-width: 440px;">
+        <div class="modal-header">添加定时扫描</div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">扫描范围</label>
+            <select class="form-input" v-model="schedForm.host_id">
+              <option :value="null">全部主机</option>
+              <option v-for="h in schedHosts" :key="h.id" :value="h.id">{{ h.name }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">频率</label>
+            <select class="form-input" v-model="schedForm.freq">
+              <option value="hourly">每小时</option>
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+              <option value="custom">自定义 cron</option>
+            </select>
+          </div>
+          <div v-if="schedForm.freq === 'hourly'" class="form-group">
+            <label class="form-label">每小时的第几分钟</label>
+            <select class="form-input" v-model="schedForm.time">
+              <option v-for="m in ['00:07','00:15','00:23','00:37','00:45','00:53']" :key="m" :value="m">第 {{ m.split(':')[1] }} 分钟</option>
+            </select>
+          </div>
+          <div v-if="schedForm.freq === 'daily' || schedForm.freq === 'weekly'" class="form-group">
+            <label class="form-label">执行时间</label>
+            <input type="time" class="form-input" v-model="schedForm.time" />
+          </div>
+          <div v-if="schedForm.freq === 'weekly'" class="form-group">
+            <label class="form-label">星期</label>
+            <select class="form-input" v-model="schedForm.weekday">
+              <option :value="1">周一</option><option :value="2">周二</option><option :value="3">周三</option>
+              <option :value="4">周四</option><option :value="5">周五</option><option :value="6">周六</option><option :value="0">周日</option>
+            </select>
+          </div>
+          <div v-if="schedForm.freq === 'custom'" class="form-group">
+            <label class="form-label">cron 表达式（分 时 日 月 周）</label>
+            <input class="form-input" v-model="schedForm.cron" placeholder="例如 30 4 * * * 表示每天 04:30" />
+          </div>
+          <div v-if="schedError" style="color: var(--red); font-size: 14px; margin-top: 8px;">{{ schedError }}</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="showSchedModal = false">取消</button>
+          <button class="btn btn-primary" @click="saveSchedule" :disabled="schedSaving">{{ schedSaving ? '保存中...' : '保存' }}</button>
         </div>
       </div>
     </div>
