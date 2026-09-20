@@ -4,9 +4,10 @@ pub mod notifications;
 pub mod passkey;
 pub mod results;
 pub mod scans;
+pub mod schedules;
 pub mod version;
 
-use axum::{Router, middleware, routing::{get, post, put}};
+use axum::{Router, middleware, routing::{get, post, put, delete}};
 use std::sync::Arc;
 use crate::AppState;
 
@@ -36,6 +37,10 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/scans/{id}/stop", post(scans::stop))
         .route("/results", get(results::list))
         .route("/results/stats", get(results::stats))
+        .route("/results/{id}/history", get(results::history))
+        .route("/schedules", get(schedules::list).post(schedules::create))
+        .route("/schedules/{id}", put(schedules::update).delete(schedules::remove))
+        .route("/schedules/{id}/run", post(schedules::run_now))
         .route("/notifications", get(notifications::list).post(notifications::create))
         .route("/notifications/{id}", put(notifications::update))
         .route("/notifications/test", post(notifications::test))

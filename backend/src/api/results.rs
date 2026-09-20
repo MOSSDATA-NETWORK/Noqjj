@@ -1,4 +1,4 @@
-use axum::{extract::{Query, State}, Json};
+use axum::{extract::{Path, Query, State}, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -55,4 +55,16 @@ pub async fn stats(State(state): State<Arc<AppState>>) -> Json<Value> {
             "total_vms_scanned": total_vms_scanned,
         }
     }))
+}
+
+/// 某条检测结果的状态变迁历史（按时间倒序，含每次的证据快照）
+pub async fn history(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Json<Value> {
+    let result = match db::get_result(&state.db, id).await {
+        Ok(r) => r,
+        Err(e) => return Json(json!({"ok": false, "error": format!("结果不存在: {}", e)})),
+    };
+    match db::list_history(&state.db, result.host_id.unwrap_or(0), &result.vmid).await {
+        Ok(items) => Json(json!({"ok": true, "data": items})),
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
 }

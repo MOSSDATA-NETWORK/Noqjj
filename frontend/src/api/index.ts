@@ -23,6 +23,17 @@ export const resultsApi = {
   list: (params?: { host_id?: number; status?: string; limit?: number; offset?: number }) =>
     api.get('/results', { params }).then(r => r.data),
   stats: () => api.get('/results/stats').then(r => r.data),
+  history: (id: number) => api.get(`/results/${id}/history`).then(r => r.data),
+}
+
+export const schedulesApi = {
+  list: () => api.get('/schedules').then(r => r.data),
+  create: (data: { host_id?: number | null; cron_expr: string; enabled?: boolean }) =>
+    api.post('/schedules', data).then(r => r.data),
+  update: (id: number, data: { cron_expr?: string; enabled?: boolean }) =>
+    api.put(`/schedules/${id}`, data).then(r => r.data),
+  delete: (id: number) => api.delete(`/schedules/${id}`).then(r => r.data),
+  run: (id: number) => api.post(`/schedules/${id}/run`).then(r => r.data),
 }
 
 export const notificationsApi = {

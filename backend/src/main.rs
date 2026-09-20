@@ -45,6 +45,9 @@ async fn main() -> anyhow::Result<()> {
     sqlx::query(include_str!("../migrations/001_init.sql"))
         .execute(&pool)
         .await?;
+    sqlx::query(include_str!("../migrations/002_result_history.sql"))
+        .execute(&pool)
+        .await?;
 
     // 加密密钥：优先从环境变量读取，否则自动生成并打印
     let master_key = load_or_generate_master_key();
@@ -264,7 +267,7 @@ fn hex_to_bytes(hex: &str) -> anyhow::Result<Vec<u8>> {
         .collect::<Result<Vec<_>, _>>()?)
 }
 
-async fn load_tls_config(cert_path: &str, key_path: &str) -> anyhow::Result<axum_server::tls_rustls::RustlsConfig> {
+async fn load_tls_config(cert_path: &str, key_path: &str) -> anyhow::Result<axum_server::tls::rustls::RustlsConfig> {
     let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
         .await
         .map_err(|e| anyhow::anyhow!("TLS 配置失败: {}", e))?;

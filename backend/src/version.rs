@@ -69,7 +69,7 @@ pub async fn check_update() -> anyhow::Result<VersionInfo> {
         update_available,
         release_url: Some(release.html_url),
         release_notes: release.body,
-        published_at: release.published_at,
+        published_at: Some(release.published_at),
     })
 }
 
