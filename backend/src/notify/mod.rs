@@ -25,6 +25,9 @@ pub async fn test_wecom(config_str: &str) -> Result<String, String> {
 }
 
 pub async fn send_telegram(bot_token: &str, chat_id: &str, text: &str) -> Result<String, String> {
+    // 粘贴带入的首尾空白会导致 Telegram API 404，先清理
+    let bot_token = bot_token.trim();
+    let chat_id = chat_id.trim();
     let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
     let client = reqwest::Client::new();
     let resp = client.post(&url)
@@ -40,7 +43,10 @@ pub async fn send_telegram(bot_token: &str, chat_id: &str, text: &str) -> Result
     if resp.status().is_success() {
         Ok("发送成功".to_string())
     } else {
-        Err(format!("HTTP {}", resp.status()))
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        // 附 Telegram 返回的 description，便于定位（404 多为 token 错误/被收回）
+        Err(format!("HTTP {} {}", status, body.chars().take(120).collect::<String>()))
     }
 }
 

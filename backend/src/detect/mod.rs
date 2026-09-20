@@ -140,7 +140,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 host_errors.push(format!("{}: 扫描失败({})", host.name, e));
                 continue;
             }
-            Ok(Err(e)) => {
+            Ok(Err(e))) => {
                 tracing::error!("Scan {} host {} scan task join error: {}", scan_id, host.name, e);
                 host_errors.push(format!("{}: 扫描任务异常", host.name));
                 continue;
@@ -241,8 +241,25 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 "unknown"
             };
 
+            // 清除的 VM 保留原证据（供列表与详情回看），其余状态用本次证据
+            let eff_evidence = if status == "cleaned" {
+                prev_results.iter()
+                    .find(|p| p.vmid == r.vmid)
+                    .and_then(|p| p.evidence.as_deref())
+                    .unwrap_or("")
+            } else {
+                evidence
+            };
+
             // 每台 VM 都落库（覆盖历史状态行，避免残留垃圾数据）
-            db::upsert_result(&state.db, scan_id, host.id, &r.vmid, status, &r.method, evidence).await?;
+            db::upsert_result(&state.db, scan_id, host.id, &r.vmid, status, &r.method, eff_evidence).await?;
+
+            // 状态变迁留档：新发现（含清除后再次发现）与已清除
+            if status == "detected" {
+                let _ = db::insert_history(&state.db, host.id, &r.vmid, "detected", &r.method, evidence, Some(scan_id)).await;
+            } else if status == "cleaned" {
+                let _ = db::insert_history(&state.db, host.id, &r.vmid, "cleaned", &r.method, eff_evidence, Some(scan_id)).await;
+            }
 
             if status == "detected" || status == "cleaned" {
                 // 通知里去掉 ## 明细段（服务名/命令等），只发证据代码
@@ -260,7 +277,13 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
         // 标记已清除的
         for prev_vmid in &prev_detected {
             if !current_detected.contains(prev_vmid) {
-                db::upsert_result(&state.db, scan_id, host.id, prev_vmid, "cleaned", "", "").await?;
+                // 保留清除前的证据，并留档历史
+                let prev_ev = prev_results.iter()
+                    .find(|p| &p.vmid == prev_vmid)
+                    .and_then(|p| p.evidence.clone())
+                    .unwrap_or_default();
+                db::upsert_result(&state.db, scan_id, host.id, prev_vmid, "cleaned", "", &prev_ev).await?;
+                let _ = db::insert_history(&state.db, host.id, prev_vmid, "cleaned", "", &prev_ev, Some(scan_id)).await;
                 crate::notify::send_all(&state.db, &state.master_key, "cleaned", &host.name, prev_vmid, "切鸡软件已清除").await;
             }
         }
