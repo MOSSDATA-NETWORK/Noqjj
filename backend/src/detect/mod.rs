@@ -140,7 +140,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 host_errors.push(format!("{}: 扫描失败({})", host.name, e));
                 continue;
             }
-            Ok(Err(e))) => {
+            Ok(Err(e)) => {
                 tracing::error!("Scan {} host {} scan task join error: {}", scan_id, host.name, e);
                 host_errors.push(format!("{}: 扫描任务异常", host.name));
                 continue;

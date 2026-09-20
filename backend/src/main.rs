@@ -267,7 +267,7 @@ fn hex_to_bytes(hex: &str) -> anyhow::Result<Vec<u8>> {
         .collect::<Result<Vec<_>, _>>()?)
 }
 
-async fn load_tls_config(cert_path: &str, key_path: &str) -> anyhow::Result<axum_server::tls::rustls::RustlsConfig> {
+async fn load_tls_config(cert_path: &str, key_path: &str) -> anyhow::Result<axum_server::tls_rustls::RustlsConfig> {
     let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
         .await
         .map_err(|e| anyhow::anyhow!("TLS 配置失败: {}", e))?;
