@@ -119,13 +119,31 @@ pub async fn scan_vm(State(state): State<Arc<AppState>>, Path(id): Path<i64>, Js
                         let method = r.get("method").and_then(|v| v.as_str()).unwrap_or("");
                         let evidence = r.get("evidence").and_then(|v| v.as_str()).unwrap_or("");
 
+                        // 单台扫描也按状态变迁处理：之前命中过现在干净 → cleaned（保留证据+留档）
+                        let prev = sqlx::query_as::<_, db::Result>(
+                            "SELECT * FROM results WHERE host_id = ? AND vmid = ? ORDER BY id DESC LIMIT 1"
+                        ).bind(id).bind(vmid).fetch_optional(&state.db).await.ok().flatten();
+                        let prev_status = prev.as_ref().map(|p| p.status.clone()).unwrap_or_default();
+                        let prev_evidence = prev.as_ref().and_then(|p| p.evidence.clone()).unwrap_or_default();
+                        let was_bad = prev_status == "detected" || prev_status == "confirmed";
+
                         let db_status = if status == "detected" { "detected" }
-                            else if status == "clean" { "clean" }
+                            else if status == "clean" { if was_bad { "cleaned" } else { "clean" } }
                             else if status == "needs_disk_scan" { "needs_disk_scan" }
                             else { "unknown" };
 
-                        if let Err(e) = db::upsert_result(&state.db, 0, id, vmid, db_status, method, evidence).await {
+                        // cleaned 保留原证据
+                        let eff_evidence = if db_status == "cleaned" { prev_evidence.as_str() } else { evidence };
+
+                        if let Err(e) = db::upsert_result(&state.db, 0, id, vmid, db_status, method, eff_evidence).await {
                             tracing::error!("scan_vm upsert failed: {}", e);
+                        }
+
+                        // 状态变迁留档
+                        if db_status == "detected" && !was_bad {
+                            let _ = db::insert_history(&state.db, id, vmid, "detected", method, evidence, None).await;
+                        } else if db_status == "cleaned" {
+                            let _ = db::insert_history(&state.db, id, vmid, "cleaned", method, eff_evidence, None).await;
                         }
                     }
                 }

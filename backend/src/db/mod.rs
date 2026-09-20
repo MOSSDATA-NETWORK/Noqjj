@@ -155,6 +155,19 @@ pub struct Schedule {
     pub created_at: Option<NaiveDateTime>,
 }
 
+/// 检测历史（状态变迁留档：detected/cleaned，含当时的证据与时间戳）
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ResultHistory {
+    pub id: i64,
+    pub host_id: i64,
+    pub vmid: String,
+    pub status: String,
+    pub method: Option<String>,
+    pub evidence: Option<String>,
+    pub scan_id: Option<i64>,
+    pub created_at: Option<NaiveDateTime>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateSchedule {
     pub host_id: Option<i64>,
@@ -370,6 +383,24 @@ pub async fn get_previous_results(pool: &SqlitePool, host_id: i64) -> anyhow::Re
         .bind(host_id).fetch_all(pool).await?)
 }
 
+// ---- 检测历史 ----
+
+pub async fn insert_history(pool: &SqlitePool, host_id: i64, vmid: &str, status: &str, method: &str, evidence: &str, scan_id: Option<i64>) -> anyhow::Result<()> {
+    sqlx::query("INSERT INTO result_history (host_id, vmid, status, method, evidence, scan_id) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(host_id).bind(vmid).bind(status).bind(method).bind(evidence).bind(scan_id)
+        .execute(pool).await?;
+    Ok(())
+}
+
+pub async fn list_history(pool: &SqlitePool, host_id: i64, vmid: &str) -> anyhow::Result<Vec<ResultHistory>> {
+    Ok(sqlx::query_as::<_, ResultHistory>("SELECT * FROM result_history WHERE host_id = ? AND vmid = ? ORDER BY id DESC LIMIT 100")
+        .bind(host_id).bind(vmid).fetch_all(pool).await?)
+}
+
+pub async fn get_result(pool: &SqlitePool, id: i64) -> anyhow::Result<crate::db::Result> {
+    Ok(sqlx::query_as::<_, crate::db::Result>("SELECT * FROM results WHERE id = ?").bind(id).fetch_one(pool).await?)
+}
+
 // ---- Notification CRUD ----
 
 pub async fn list_notifications(pool: &SqlitePool) -> anyhow::Result<Vec<Notification>> {
@@ -406,6 +437,29 @@ pub async fn create_schedule(pool: &SqlitePool, s: CreateSchedule) -> anyhow::Re
     let id = sqlx::query("INSERT INTO schedules (host_id, cron_expr, enabled) VALUES (?, ?, ?)")
         .bind(s.host_id).bind(&s.cron_expr).bind(enabled).execute(pool).await?.last_insert_rowid();
     Ok(sqlx::query_as::<_, Schedule>("SELECT * FROM schedules WHERE id=?").bind(id).fetch_one(pool).await?)
+}
+
+pub async fn update_schedule(pool: &SqlitePool, id: i64, cron_expr: Option<&str>, enabled: Option<bool>) -> anyhow::Result<Schedule> {
+    let existing = sqlx::query_as::<_, Schedule>("SELECT * FROM schedules WHERE id=?").bind(id).fetch_one(pool).await?;
+    let cron = cron_expr.map(|c| c.to_string()).unwrap_or(existing.cron_expr);
+    let en = enabled.unwrap_or(existing.enabled);
+    sqlx::query("UPDATE schedules SET cron_expr=?, enabled=? WHERE id=?")
+        .bind(&cron).bind(en).bind(id).execute(pool).await?;
+    Ok(sqlx::query_as::<_, Schedule>("SELECT * FROM schedules WHERE id=?").bind(id).fetch_one(pool).await?)
+}
+
+/// 更新定时任务的执行时间戳（next_run 为本地时间）
+pub async fn update_schedule_run(pool: &SqlitePool, id: i64, next_run: Option<NaiveDateTime>) -> anyhow::Result<()> {
+    sqlx::query("UPDATE schedules SET last_run=CURRENT_TIMESTAMP, next_run=? WHERE id=?")
+        .bind(next_run).bind(id).execute(pool).await?;
+    Ok(())
+}
+
+/// 只更新 next_run（初始化/修正时）
+pub async fn set_schedule_next_run(pool: &SqlitePool, id: i64, next_run: Option<NaiveDateTime>) -> anyhow::Result<()> {
+    sqlx::query("UPDATE schedules SET next_run=? WHERE id=?")
+        .bind(next_run).bind(id).execute(pool).await?;
+    Ok(())
 }
 
 pub async fn delete_schedule(pool: &SqlitePool, id: i64) -> anyhow::Result<()> {
