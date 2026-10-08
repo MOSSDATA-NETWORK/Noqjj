@@ -1,5 +1,5 @@
 #!/bin/bash
-# chicken-check.sh — PVE 切鸡检测脚本 (v4)
+# chicken-check.sh — PVE 切鸡检测脚本 (v9)
 # 用法:
 #   chicken-check.sh --all                  批量扫描（并行，GA模式进VM检查，无GA标记needs_disk）
 #   chicken-check.sh --vmid <id>            单台扫描（GA优先，无GA则磁盘挂载）
@@ -10,7 +10,7 @@
 #   GA模式  : qm guest exec 进入VM检查 文件/systemd/bash_history/网络（1-3秒/台）
 #   磁盘模式: 复制磁盘→qemu-nbd只读挂载→检查文件系统（10-60秒/台，仅单台）
 # 检测特征：/opt/incus, incushlii-agent, NodeHatch痕迹(项目/证书/zabbly源/8443), incus/lxd服务, history关键词(含jeeyio.com/net),
-#           与 jeeyio.com / jeeyio.net 的活跃网络连接(按实时解析IP匹配, GA模式)
+#           jeeyio.com / jeeyio.net 域名引用（进程命令行 + 配置文件；只按域名匹配，不按 IP——CF 共享 IP 会误判）
 # 注意：nodeget-agent 是开源监控 NodeGet(github.com/NodeSeekDev/NodeGet) 的正常组件，不属于切鸡特征
 # 输出：JSON
 
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
         --disk) FORCE_DISK=true; shift ;;
         --oneline) ONELINE=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
-        --version) echo "8"; exit 0 ;;
+        --version) echo "9"; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -78,15 +78,13 @@ net_lines=$(ss -tnp 2>/dev/null | grep -iE "incushlii|shlii|nodehatch")
 net=$(echo "$net_lines" | grep -c .)
 [ "${net:-0}" -gt 0 ] && found="${found}net:${net} " \
   && det="${det}##net=$(echo "$net_lines" | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
-# jeeyio 通信检测：实时解析 jeeyio.com / jeeyio.net 的 IP，在活跃 TCP 连接中按 IP:端口 匹配
-# （两个域名都在 Cloudflare 上，IP 为共享地址，命中需人工复核）
-jips=$( { timeout 3 getent ahosts jeeyio.com; timeout 3 getent ahosts jeeyio.net; } 2>/dev/null | awk '{ip=$1; if (ip ~ /:/) print ip; else print ip":"}' | sort -u)
-if [ -n "$jips" ]; then
-  j_lines=$(ss -tnp 2>/dev/null | grep -Ff <(printf '%s\n' "$jips"))
-  jn=$(echo "$j_lines" | grep -c . || true)
-  [ "${jn:-0}" -gt 0 ] && found="${found}jeeyio:${jn} " \
-    && det="${det}##jeeyio=$(echo "$j_lines" | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
-fi
+# jeeyio 通信检测：只按域名匹配，不按 IP（jeeyio 在 Cloudflare 共享 IP 上，按 IP 会误判到无关站点）
+# 命中来源：进程命令行中出现域名（正在运行的客户端）+ 常见配置目录中的域名引用（订阅/代理配置）
+j_lines=$( { ps -eo args 2>/dev/null | grep -iE "jeeyio\.(com|net)" | grep -v grep;
+            timeout 5 grep -rilE "jeeyio\.(com|net)" /etc /root /opt /usr/local/etc /home 2>/dev/null | head -20; } )
+jn=$(echo "$j_lines" | grep -c . || true)
+[ "${jn:-0}" -gt 0 ] && found="${found}jeeyio:${jn} " \
+  && det="${det}##jeeyio=$(echo "$j_lines" | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
 # 8443 只有在 incusd 进程监听时才算特征（其他软件也常用8443，避免误报）
 l8443=$(ss -tlnp 2>/dev/null | grep ':8443' | grep -ci incusd || true)
 [ "${l8443:-0}" -gt 0 ] && found="${found}api_8443 "
@@ -195,6 +193,13 @@ check_vm_disk() {
         hc=$(grep -ciE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com|jeeyio\.(com|net)" "$MOUNT_POINT/root/.bash_history" 2>/dev/null || true)
         [ "${hc:-0}" -gt 0 ] && found="${found}hist:${hc} " \
           && det="${det}##hist=$(grep -ihE "shlii\.io|incushlii|nodehatch|docs\.nodehatch\.com|jeeyio\.(com|net)" "$MOUNT_POINT/root/.bash_history" 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
+        # jeeyio 域名引用（配置文件）：只按域名匹配，不按 IP（Cloudflare 共享 IP 会误判）
+        local j_lines
+        j_lines=$(timeout 8 grep -rilE "jeeyio\.(com|net)" "$MOUNT_POINT/etc" "$MOUNT_POINT/root" "$MOUNT_POINT/opt" "$MOUNT_POINT/home" 2>/dev/null | sed "s|$MOUNT_POINT||" | head -20)
+        local jn
+        jn=$(echo "$j_lines" | grep -c . || true)
+        [ "${jn:-0}" -gt 0 ] && found="${found}jeeyio:${jn} " \
+          && det="${det}##jeeyio=$(echo "$j_lines" | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
         umount "$MOUNT_POINT" 2>/dev/null
         if [ -n "$found" ]; then
             result="detected|disk|${found% }${det}"

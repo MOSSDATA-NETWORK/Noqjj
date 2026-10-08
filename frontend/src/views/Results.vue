@@ -126,7 +126,7 @@ function evidenceItems(e: string | null | undefined): EvidenceItem[] {
       const items = detailMap[m[1]]
       if (m[1] === 'svc') return { raw: t, label: `可疑系统服务 × ${n}`, desc: `在 /etc/systemd/system/ 下发现 ${n} 个名称含 incus / shlii / nodehatch 的服务文件——安装了切鸡或机场相关服务`, items }
       if (m[1] === 'hist') return { raw: t, label: `可疑命令历史 × ${n}`, desc: `bash 历史中有 ${n} 条与 shlii.io / incushlii / nodehatch / jeeyio 相关的命令——执行过安装、管理或访问操作`, items }
-      if (m[1] === 'jeeyio') return { raw: t, label: `jeeyio 通信 × ${n}`, desc: `当前有 ${n} 条与 jeeyio.com / jeeyio.net 的活跃 TCP 连接（按域名实时解析的 IP 匹配）——正在与该网站通信；注意其 IP 为 Cloudflare 共享地址，命中需人工复核`, items }
+      if (m[1] === 'jeeyio') return { raw: t, label: `jeeyio 域名引用 × ${n}`, desc: `发现 ${n} 处 jeeyio.com / jeeyio.net 的域名引用（进程命令行 / 配置文件 / 命令历史）——只按域名匹配，不按 IP（其 IP 为 Cloudflare 共享地址，按 IP 会误判）`, items }
       return { raw: t, label: `可疑网络连接 × ${n}`, desc: `当前有 ${n} 条由可疑进程发起的网络连接——切鸡 / 机场程序正在联网运行`, items }
     }
     const fixed = EVIDENCE_FIXED[t]

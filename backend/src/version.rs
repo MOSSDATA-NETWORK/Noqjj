@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_REPO: &str = "MOSSDATA-NETWORK/Noqjj";
 /// 检测脚本版本（脚本内容变化时递增，用于触发自动重新部署）
-pub const SCRIPT_VERSION: &str = "8";
+pub const SCRIPT_VERSION: &str = "9";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VersionInfo {
