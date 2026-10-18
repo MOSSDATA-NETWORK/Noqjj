@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
         --disk) FORCE_DISK=true; shift ;;
         --oneline) ONELINE=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
-        --version) echo "9"; exit 0 ;;
+        --version) echo "10"; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -88,6 +88,19 @@ jn=$(echo "$j_lines" | grep -c . || true)
 # 8443 只有在 incusd 进程监听时才算特征（其他软件也常用8443，避免误报）
 l8443=$(ss -tlnp 2>/dev/null | grep ':8443' | grep -ci incusd || true)
 [ "${l8443:-0}" -gt 0 ] && found="${found}api_8443 "
+# Podman 容器分裂（NAT VPS 分销新形态）：三个条件同时满足才计，避免误判开发机
+#   podman 存在 + ≥2 个运行容器 + sing-box/xray 代理核心在跑
+if command -v podman >/dev/null 2>&1; then
+  pc=$(timeout 3 podman ps -q 2>/dev/null | wc -l)
+  if [ "$pc" -ge 2 ] 2>/dev/null && { pgrep -x sing-box >/dev/null 2>&1 || pgrep -x xray >/dev/null 2>&1; }; then
+    found="${found}podman_split "
+    img=$(timeout 3 podman ps --format "{{.Image}}" 2>/dev/null | sort -u | head -3 | tr '\n' ',' | sed 's/,$//')
+    [ -n "$img" ] && det="${det}##podman=${img}"
+  fi
+fi
+# 分销面板/自建镜像品牌痕迹（narwhalcloud=独角鲸云自建镜像, fuckip=其面板域名）
+bp=$(grep -rioE "narwhalcloud|fuckip" /root/.bash_history /etc/systemd/system /usr/local/etc 2>/dev/null | head -1)
+[ -n "$bp" ] && found="${found}brandpanel "
 [ -n "$found" ] && echo "FOUND:${found}${det}" || echo "CLEAN"
 CHECKEOF
 )
@@ -200,6 +213,14 @@ check_vm_disk() {
         jn=$(echo "$j_lines" | grep -c . || true)
         [ "${jn:-0}" -gt 0 ] && found="${found}jeeyio:${jn} " \
           && det="${det}##jeeyio=$(echo "$j_lines" | sed 's/["\\#|,]/ /g' | cut -c1-100 | tr '\n' ',' | sed 's/,$//')"
+        # Podman 容器分裂（磁盘态）：容器存储层非空 + 代理核心二进制存在
+        if [ -d "$MOUNT_POINT/var/lib/containers/storage/overlay" ] && ls "$MOUNT_POINT/var/lib/containers/storage/overlay" 2>/dev/null | grep -q . \
+           && { [ -x "$MOUNT_POINT/usr/local/bin/sing-box" ] || [ -x "$MOUNT_POINT/usr/bin/sing-box" ] || [ -x "$MOUNT_POINT/usr/local/bin/xray" ] || [ -x "$MOUNT_POINT/usr/bin/xray" ]; }; then
+            found="${found}podman_split "
+        fi
+        # 分销面板/自建镜像品牌痕迹
+        grep -rioE "narwhalcloud|fuckip" "$MOUNT_POINT/root/.bash_history" "$MOUNT_POINT/etc/systemd/system" "$MOUNT_POINT/usr/local/etc" 2>/dev/null | grep -q . \
+          && found="${found}brandpanel "
         umount "$MOUNT_POINT" 2>/dev/null
         if [ -n "$found" ]; then
             result="detected|disk|${found% }${det}"

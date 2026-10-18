@@ -99,6 +99,8 @@ const EVIDENCE_FIXED: Record<string, { label: string; desc: string }> = {
   nodehatch_cert: { label: 'NodeHatch 面板证书', desc: 'Incus 信任证书中存在 NodeHatch 面板的证书' },
   zabbly_incus: { label: 'zabbly 软件源', desc: '配置了 zabbly 的 Incus 安装源——专门用于装 Incus 切鸡' },
   api_8443: { label: 'Incus 管理端口', desc: 'incusd 进程正在监听 8443 管理端口' },
+  podman_split: { label: 'Podman 容器分裂', desc: 'Podman 运行多个容器且同时有 sing-box/xray 代理核心在跑——容器化分销（NAT VPS 分销）形态' },
+  brandpanel: { label: '分销面板品牌痕迹', desc: '发现分销面板/自建镜像品牌痕迹（narwhalcloud / fuckip）' },
   vm_stopped: { label: '已关机', desc: '检测时该 VM 处于关机状态，未执行检测' },
 }
 
