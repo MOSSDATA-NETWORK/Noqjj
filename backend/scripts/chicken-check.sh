@@ -1,5 +1,5 @@
 #!/bin/bash
-# chicken-check.sh — PVE 切鸡检测脚本 (v11)
+# chicken-check.sh — PVE 切鸡检测脚本 (v12)
 # 用法:
 #   chicken-check.sh --all                  批量扫描（并行，GA模式进VM检查，无GA标记needs_disk）
 #   chicken-check.sh --vmid <id>            单台扫描（GA优先，无GA则磁盘挂载）
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
         --disk) FORCE_DISK=true; shift ;;
         --oneline) ONELINE=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
-        --version) echo "11"; exit 0 ;;
+        --version) echo "12"; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -95,7 +95,7 @@ if command -v podman >/dev/null 2>&1; then
   if [ "$pc" -ge 2 ] 2>/dev/null && { pgrep -x sing-box >/dev/null 2>&1 || pgrep -x xray >/dev/null 2>&1; }; then
     found="${found}podman_split "
     img=$(timeout 3 podman ps --format "{{.Image}}" 2>/dev/null | sort -u | head -3 | tr '\n' ',' | sed 's/,$//')
-    [ -n "$img" ] && det="${det}##podman=${img}"
+    [ -n "$img" ] && det="${det}##podman_split=${img}"
   fi
 fi
 # 分销面板痕迹分级：
@@ -222,13 +222,14 @@ check_vm_disk() {
         if [ -d "$MOUNT_POINT/var/lib/containers/storage/overlay" ] && ls "$MOUNT_POINT/var/lib/containers/storage/overlay" 2>/dev/null | grep -q . \
            && { [ -x "$MOUNT_POINT/usr/local/bin/sing-box" ] || [ -x "$MOUNT_POINT/usr/bin/sing-box" ] || [ -x "$MOUNT_POINT/usr/local/bin/xray" ] || [ -x "$MOUNT_POINT/usr/bin/xray" ]; }; then
             found="${found}podman_split "
+            det="${det}##podman_split=$(ls "$MOUNT_POINT/var/lib/containers/storage/overlay" 2>/dev/null | wc -l) layers"
         fi
         # 分销面板痕迹分级（同 GA：panel_run 强 / panel_hist 弱）
-        pr=$(grep -rioE "narwhalcloud|fuckip" "$MOUNT_POINT/etc/systemd/system" "$MOUNT_POINT/usr/local/etc" 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-80 | head -3 | tr '\n' ',' | sed 's/,$//')
+        pr=$(grep -rioE "narwhalcloud|fuckip" "$MOUNT_POINT/etc/systemd/system" "$MOUNT_POINT/usr/local/etc" 2>/dev/null | sed "s#$MOUNT_POINT##g" | sed 's/["\\#|,]/ /g' | cut -c1-80 | head -3 | tr '\n' ',' | sed 's/,$//')
         [ -n "$pr" ] && found="${found}panel_run " && det="${det}##panel_run=${pr}"
         ph=$(grep -icE "narwhalcloud|fuckip" "$MOUNT_POINT/root/.bash_history" 2>/dev/null || true)
         [ "${ph:-0}" -gt 0 ] && found="${found}panel_hist:${ph} " \
-          && det="${det}##panel_hist=$(grep -inE "narwhalcloud|fuckip" "$MOUNT_POINT/root/.bash_history" 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-90 | head -3 | tr '\n' ',' | sed 's/,$//')"
+          && det="${det}##panel_hist=$(grep -inE "narwhalcloud|fuckip" "$MOUNT_POINT/root/.bash_history" 2>/dev/null | sed "s#$MOUNT_POINT##g" | sed 's/["\\#|,]/ /g' | cut -c1-90 | head -3 | tr '\n' ',' | sed 's/,$//')"
         umount "$MOUNT_POINT" 2>/dev/null
         if [ -n "$found" ]; then
             result="detected|disk|${found% }${det}"

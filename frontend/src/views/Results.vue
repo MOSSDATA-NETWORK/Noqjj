@@ -133,7 +133,10 @@ function evidenceItems(e: string | null | undefined): EvidenceItem[] {
       return { raw: t, label: `可疑网络连接 × ${n}`, desc: `当前有 ${n} 条由可疑进程发起的网络连接——切鸡 / 机场程序正在联网运行`, items }
     }
     const fixed = EVIDENCE_FIXED[t]
-    return fixed ? { raw: t, ...fixed } : { raw: t, label: t, desc: '' }
+    // 无数量的固定特征（panel_run/podman_split 等）也可能带明细段，一并挂上
+    const items = detailMap[t]
+    const base = fixed ? { raw: t, ...fixed } : { raw: t, label: t, desc: '' }
+    return items && items.length ? { ...base, items } : base
   })
 }
 
