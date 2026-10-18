@@ -100,7 +100,7 @@ const EVIDENCE_FIXED: Record<string, { label: string; desc: string }> = {
   zabbly_incus: { label: 'zabbly 软件源', desc: '配置了 zabbly 的 Incus 安装源——专门用于装 Incus 切鸡' },
   api_8443: { label: 'Incus 管理端口', desc: 'incusd 进程正在监听 8443 管理端口' },
   podman_split: { label: 'Podman 容器分裂', desc: 'Podman 运行多个容器且同时有 sing-box/xray 代理核心在跑——容器化分销（NAT VPS 分销）形态' },
-  brandpanel: { label: '分销面板品牌痕迹', desc: '发现分销面板/自建镜像品牌痕迹（narwhalcloud / fuckip）' },
+  panel_run: { label: '分销面板运营痕迹', desc: '系统服务/代理配置文件中出现分销面板品牌（narwhalcloud / fuckip）——分销运营实锤' },
   vm_stopped: { label: '已关机', desc: '检测时该 VM 处于关机状态，未执行检测' },
 }
 
@@ -122,13 +122,14 @@ function evidenceItems(e: string | null | undefined): EvidenceItem[] {
     detailMap[key] = [...(detailMap[key] || []), ...vals]
   }
   return head.split(/\s+/).map((t): EvidenceItem => {
-    const m = t.match(/^(svc|hist|net|jeeyio):(\d+)$/)
+    const m = t.match(/^(svc|hist|net|jeeyio|panel_hist):(\d+)$/)
     if (m) {
       const n = Number(m[2])
       const items = detailMap[m[1]]
       if (m[1] === 'svc') return { raw: t, label: `可疑系统服务 × ${n}`, desc: `在 /etc/systemd/system/ 下发现 ${n} 个名称含 incus / shlii / nodehatch 的服务文件——安装了切鸡或机场相关服务`, items }
       if (m[1] === 'hist') return { raw: t, label: `可疑命令历史 × ${n}`, desc: `bash 历史中有 ${n} 条与 shlii.io / incushlii / nodehatch / jeeyio 相关的命令——执行过安装、管理或访问操作`, items }
       if (m[1] === 'jeeyio') return { raw: t, label: `jeeyio 域名引用 × ${n}`, desc: `发现 ${n} 处 jeeyio.com / jeeyio.net 的域名引用（进程命令行 / 配置文件 / 命令历史）——只按域名匹配，不按 IP（其 IP 为 Cloudflare 共享地址，按 IP 会误判）`, items }
+      if (m[1] === 'panel_hist') return { raw: t, label: `分销面板域名提及 × ${n}`, desc: `bash 历史中出现 ${n} 次分销面板域名（narwhalcloud / fuckip）——弱信号：可能只是测评机 ping 商家测试点，结合下方明细人工判断`, items }
       return { raw: t, label: `可疑网络连接 × ${n}`, desc: `当前有 ${n} 条由可疑进程发起的网络连接——切鸡 / 机场程序正在联网运行`, items }
     }
     const fixed = EVIDENCE_FIXED[t]

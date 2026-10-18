@@ -1,5 +1,5 @@
 #!/bin/bash
-# chicken-check.sh — PVE 切鸡检测脚本 (v9)
+# chicken-check.sh — PVE 切鸡检测脚本 (v11)
 # 用法:
 #   chicken-check.sh --all                  批量扫描（并行，GA模式进VM检查，无GA标记needs_disk）
 #   chicken-check.sh --vmid <id>            单台扫描（GA优先，无GA则磁盘挂载）
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
         --disk) FORCE_DISK=true; shift ;;
         --oneline) ONELINE=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
-        --version) echo "10"; exit 0 ;;
+        --version) echo "11"; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -98,9 +98,14 @@ if command -v podman >/dev/null 2>&1; then
     [ -n "$img" ] && det="${det}##podman=${img}"
   fi
 fi
-# 分销面板/自建镜像品牌痕迹（narwhalcloud=独角鲸云自建镜像, fuckip=其面板域名）
-bp=$(grep -rioE "narwhalcloud|fuckip" /root/.bash_history /etc/systemd/system /usr/local/etc 2>/dev/null | head -1)
-[ -n "$bp" ] && found="${found}brandpanel "
+# 分销面板痕迹分级：
+#   panel_run    = 运营证据（systemd服务/代理配置里出现品牌）—— 分销运营实锤
+#   panel_hist:N = 仅命令历史提及（可能是测评机 ping 测试点）—— 弱信号，附明细人工复核
+pr=$(grep -rioE "narwhalcloud|fuckip" /etc/systemd/system /usr/local/etc 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-80 | head -3 | tr '\n' ',' | sed 's/,$//')
+[ -n "$pr" ] && found="${found}panel_run " && det="${det}##panel_run=${pr}"
+ph=$(grep -icE "narwhalcloud|fuckip" /root/.bash_history 2>/dev/null || true)
+[ "${ph:-0}" -gt 0 ] && found="${found}panel_hist:${ph} " \
+  && det="${det}##panel_hist=$(grep -inE "narwhalcloud|fuckip" /root/.bash_history 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-90 | head -3 | tr '\n' ',' | sed 's/,$//')"
 [ -n "$found" ] && echo "FOUND:${found}${det}" || echo "CLEAN"
 CHECKEOF
 )
@@ -218,9 +223,12 @@ check_vm_disk() {
            && { [ -x "$MOUNT_POINT/usr/local/bin/sing-box" ] || [ -x "$MOUNT_POINT/usr/bin/sing-box" ] || [ -x "$MOUNT_POINT/usr/local/bin/xray" ] || [ -x "$MOUNT_POINT/usr/bin/xray" ]; }; then
             found="${found}podman_split "
         fi
-        # 分销面板/自建镜像品牌痕迹
-        grep -rioE "narwhalcloud|fuckip" "$MOUNT_POINT/root/.bash_history" "$MOUNT_POINT/etc/systemd/system" "$MOUNT_POINT/usr/local/etc" 2>/dev/null | grep -q . \
-          && found="${found}brandpanel "
+        # 分销面板痕迹分级（同 GA：panel_run 强 / panel_hist 弱）
+        pr=$(grep -rioE "narwhalcloud|fuckip" "$MOUNT_POINT/etc/systemd/system" "$MOUNT_POINT/usr/local/etc" 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-80 | head -3 | tr '\n' ',' | sed 's/,$//')
+        [ -n "$pr" ] && found="${found}panel_run " && det="${det}##panel_run=${pr}"
+        ph=$(grep -icE "narwhalcloud|fuckip" "$MOUNT_POINT/root/.bash_history" 2>/dev/null || true)
+        [ "${ph:-0}" -gt 0 ] && found="${found}panel_hist:${ph} " \
+          && det="${det}##panel_hist=$(grep -inE "narwhalcloud|fuckip" "$MOUNT_POINT/root/.bash_history" 2>/dev/null | sed 's/["\\#|,]/ /g' | cut -c1-90 | head -3 | tr '\n' ',' | sed 's/,$//')"
         umount "$MOUNT_POINT" 2>/dev/null
         if [ -n "$found" ]; then
             result="detected|disk|${found% }${det}"
