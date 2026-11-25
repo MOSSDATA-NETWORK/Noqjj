@@ -73,10 +73,14 @@ async fn check_and_run_schedules(state: Arc<AppState>) -> anyhow::Result<()> {
             let state_clone = state.clone();
             let scan_id = scan.id;
             let host_id = schedule.host_id;
+            let auto_disk = schedule.auto_disk_scan;
 
             tokio::spawn(async move {
-                if let Err(e) = crate::detect::run_scan(state_clone, scan_id, host_id).await {
-                    tracing::error!("Scheduled scan {} failed: {}", scan_id, e);
+                match crate::detect::run_scan(state_clone.clone(), scan_id, host_id).await {
+                    // 勾选了「自动磁盘扫描」：扫描结束后把待检测 VM 交给后台磁盘扫描队列
+                    Ok(outcome) if auto_disk => crate::diskscan::enqueue_after_scan(&state_clone, scan_id, outcome).await,
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("Scheduled scan {} failed: {}", scan_id, e),
                 }
             });
 

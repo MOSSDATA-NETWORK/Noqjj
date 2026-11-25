@@ -153,6 +153,8 @@ pub struct Schedule {
     pub last_run: Option<NaiveDateTime>,
     pub next_run: Option<NaiveDateTime>,
     pub created_at: Option<NaiveDateTime>,
+    /// 常规扫描结束后自动对「待检测」VM 做磁盘扫描
+    pub auto_disk_scan: bool,
 }
 
 /// 检测历史（状态变迁留档：detected/cleaned，含当时的证据与时间戳）
@@ -173,6 +175,7 @@ pub struct CreateSchedule {
     pub host_id: Option<i64>,
     pub cron_expr: String,
     pub enabled: Option<bool>,
+    pub auto_disk_scan: Option<bool>,
 }
 
 // ---- Host CRUD ----
@@ -434,17 +437,19 @@ pub async fn list_schedules(pool: &SqlitePool) -> anyhow::Result<Vec<Schedule>> 
 
 pub async fn create_schedule(pool: &SqlitePool, s: CreateSchedule) -> anyhow::Result<Schedule> {
     let enabled = s.enabled.unwrap_or(true);
-    let id = sqlx::query("INSERT INTO schedules (host_id, cron_expr, enabled) VALUES (?, ?, ?)")
-        .bind(s.host_id).bind(&s.cron_expr).bind(enabled).execute(pool).await?.last_insert_rowid();
+    let auto_disk = s.auto_disk_scan.unwrap_or(false);
+    let id = sqlx::query("INSERT INTO schedules (host_id, cron_expr, enabled, auto_disk_scan) VALUES (?, ?, ?, ?)")
+        .bind(s.host_id).bind(&s.cron_expr).bind(enabled).bind(auto_disk).execute(pool).await?.last_insert_rowid();
     Ok(sqlx::query_as::<_, Schedule>("SELECT * FROM schedules WHERE id=?").bind(id).fetch_one(pool).await?)
 }
 
-pub async fn update_schedule(pool: &SqlitePool, id: i64, cron_expr: Option<&str>, enabled: Option<bool>) -> anyhow::Result<Schedule> {
+pub async fn update_schedule(pool: &SqlitePool, id: i64, cron_expr: Option<&str>, enabled: Option<bool>, auto_disk_scan: Option<bool>) -> anyhow::Result<Schedule> {
     let existing = sqlx::query_as::<_, Schedule>("SELECT * FROM schedules WHERE id=?").bind(id).fetch_one(pool).await?;
     let cron = cron_expr.map(|c| c.to_string()).unwrap_or(existing.cron_expr);
     let en = enabled.unwrap_or(existing.enabled);
-    sqlx::query("UPDATE schedules SET cron_expr=?, enabled=? WHERE id=?")
-        .bind(&cron).bind(en).bind(id).execute(pool).await?;
+    let auto_disk = auto_disk_scan.unwrap_or(existing.auto_disk_scan);
+    sqlx::query("UPDATE schedules SET cron_expr=?, enabled=?, auto_disk_scan=? WHERE id=?")
+        .bind(&cron).bind(en).bind(auto_disk).bind(id).execute(pool).await?;
     Ok(sqlx::query_as::<_, Schedule>("SELECT * FROM schedules WHERE id=?").bind(id).fetch_one(pool).await?)
 }
 

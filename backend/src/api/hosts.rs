@@ -95,63 +95,19 @@ pub async fn deploy(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> 
     }
 }
 
+/// 单台 VM 磁盘扫描：交给后台队列执行（网页切走不影响），立即返回任务 ID；手动单台不跳过白名单
 pub async fn scan_vm(State(state): State<Arc<AppState>>, Path(id): Path<i64>, Json(body): Json<ScanVmRequest>) -> Json<Value> {
-    let host = match db::get_host(&state.db, id).await {
-        Ok(h) => h,
-        Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
-    };
-
-    let auth = make_ssh_auth(&host, &state.master_key);
-
-    // 执行单 VM 磁盘扫描
-    match crate::deploy::run_remote_scan(&host.host, host.port as u16, &host.username, &auth, Some(&body.vmid)).await {
-        Ok(output) => {
-            // 解析结果并更新数据库
-            tracing::info!("scan_vm {} raw output ({} bytes): {}", body.vmid, output.len(), output.chars().take(500).collect::<String>());
-            match serde_json::from_str::<serde_json::Value>(&output) {
-                Ok(result) => {
-                    let empty = vec![];
-                    let results = result.get("results").and_then(|r| r.as_array()).unwrap_or(&empty);
-                    tracing::info!("scan_vm {} parsed {} results", body.vmid, results.len());
-                    for r in results {
-                        let vmid = r.get("vmid").and_then(|v| v.as_str()).unwrap_or("");
-                        let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
-                        let method = r.get("method").and_then(|v| v.as_str()).unwrap_or("");
-                        let evidence = r.get("evidence").and_then(|v| v.as_str()).unwrap_or("");
-
-                        // 单台扫描也按状态变迁处理：之前命中过现在干净 → cleaned（保留证据+留档）
-                        let prev = sqlx::query_as::<_, db::Result>(
-                            "SELECT * FROM results WHERE host_id = ? AND vmid = ? ORDER BY id DESC LIMIT 1"
-                        ).bind(id).bind(vmid).fetch_optional(&state.db).await.ok().flatten();
-                        let prev_status = prev.as_ref().map(|p| p.status.clone()).unwrap_or_default();
-                        let prev_evidence = prev.as_ref().and_then(|p| p.evidence.clone()).unwrap_or_default();
-                        let was_bad = prev_status == "detected" || prev_status == "confirmed";
-
-                        let db_status = if status == "detected" { "detected" }
-                            else if status == "clean" { if was_bad { "cleaned" } else { "clean" } }
-                            else if status == "needs_disk_scan" { "needs_disk_scan" }
-                            else { "unknown" };
-
-                        // cleaned 保留原证据
-                        let eff_evidence = if db_status == "cleaned" { prev_evidence.as_str() } else { evidence };
-
-                        if let Err(e) = db::upsert_result(&state.db, 0, id, vmid, db_status, method, eff_evidence).await {
-                            tracing::error!("scan_vm upsert failed: {}", e);
-                        }
-
-                        // 状态变迁留档
-                        if db_status == "detected" && !was_bad {
-                            let _ = db::insert_history(&state.db, id, vmid, "detected", method, evidence, None).await;
-                        } else if db_status == "cleaned" {
-                            let _ = db::insert_history(&state.db, id, vmid, "cleaned", method, eff_evidence, None).await;
-                        }
-                    }
-                }
-                Err(e) => tracing::error!("scan_vm {} parse failed: {}, raw: {}", body.vmid, e, output),
-            }
-            Json(json!({"ok": true, "message": format!("VM {} 磁盘扫描完成", body.vmid)}))
-        }
-        Err(e) => Json(json!({"ok": false, "error": format!("扫描失败: {}", e)})),
+    if let Err(e) = db::get_host(&state.db, id).await {
+        return Json(json!({"ok": false, "error": e.to_string()}));
+    }
+    let vmid = body.vmid.trim().to_string();
+    if !crate::diskscan::is_valid_vmid(&vmid) {
+        return Json(json!({"ok": false, "error": "VMID 非法"}));
+    }
+    match crate::diskscan::enqueue(&state, "single", None, vec![(id, vmid.clone())], false).await {
+        Ok(o) if o.job_id.is_some() => Json(json!({"ok": true, "data": o, "message": format!("VM {} 已加入磁盘扫描队列，后台执行", vmid)})),
+        Ok(_) => Json(json!({"ok": false, "error": format!("VM {} 已在磁盘扫描队列中", vmid)})),
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
     }
 }
 

@@ -23,12 +23,20 @@ struct ScriptResult {
     evidence: Option<String>,
 }
 
+/// 常规扫描的产出：本次「待检测」（无 GA、需磁盘扫描）的 VM，以及是否被手动停止
+#[derive(Debug, Default)]
+pub struct ScanOutcome {
+    pub needs_disk: Vec<(i64, String)>,
+    pub stopped: bool,
+}
+
 /// 运行扫描（通过远程脚本，带超时和进度更新）
-pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) -> anyhow::Result<()> {
+pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) -> anyhow::Result<ScanOutcome> {
     let hosts = match host_id {
         Some(hid) => vec![db::get_host(&state.db, hid).await?],
         None => db::list_hosts(&state.db).await?,
     };
+    let mut outcome = ScanOutcome::default();
 
     // 跨主机累加：扫描记录的 VM 总数/统计 = 所有机器相加
     let mut sum_total = 0i64;
@@ -194,6 +202,7 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             .collect();
 
         let mut current_detected = std::collections::HashSet::new();
+        let mut host_stopped = false;
 
         // 更新 VM 总数（进度反馈，含之前主机累计）
         let _ = db::update_scan_progress(&state.db, scan_id, total_base + total, ga_base, disk_base, found_base).await;
@@ -207,6 +216,8 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 .unwrap_or_default();
             if scan_status == "stopped" {
                 tracing::info!("Scan {} stopped by user at VM {}/{}", scan_id, i, total);
+                host_stopped = true;
+                outcome.stopped = true;
                 break;
             }
 
@@ -219,6 +230,17 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
                 _ => {}
             }
 
+            if r.status == "needs_disk_scan" {
+                outcome.needs_disk.push((host.id, r.vmid.clone()));
+            }
+
+            // 之前命中、本次无法验证（关机/跳过/无 GA 待磁盘扫描/检测失败）→ 保持命中状态，
+            // 不能当成「已清除」（否则每天误发已清除，磁盘扫描后又误发新发现）
+            if r.status != "detected" && r.status != "clean" && prev_detected.contains(&r.vmid) {
+                current_detected.insert(r.vmid.clone());
+                continue;
+            }
+
             // 跳过停止的 VM（不入库）
             if evidence == "vm_stopped" {
                 continue;
@@ -227,6 +249,8 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             let status = if r.status == "detected" {
                 found_count += 1;
                 current_detected.insert(r.vmid.clone());
+                // 命中立即移出磁盘扫描白名单
+                let _ = crate::diskscan::whitelist_remove(&state.db, host.id, &r.vmid).await;
                 if prev_detected.contains(&r.vmid) { "confirmed" } else { "detected" }
             } else if r.status == "clean" {
                 if prev_detected.contains(&r.vmid) { "cleaned" } else { "clean" }
@@ -274,8 +298,11 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             }
         }
 
-        // 标记已清除的
+        // 标记已清除的（VM 已不在宿主机上）。中途停止时未处理的 VM 不能当成已清除
         for prev_vmid in &prev_detected {
+            if host_stopped {
+                break;
+            }
             if !current_detected.contains(prev_vmid) {
                 // 保留清除前的证据，并留档历史
                 let prev_ev = prev_results.iter()
@@ -313,5 +340,5 @@ pub async fn run_scan(state: Arc<AppState>, scan_id: i64, host_id: Option<i64>) 
             .await;
     }
 
-    Ok(())
+    Ok(outcome)
 }

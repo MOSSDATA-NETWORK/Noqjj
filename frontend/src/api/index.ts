@@ -28,12 +28,26 @@ export const resultsApi = {
 
 export const schedulesApi = {
   list: () => api.get('/schedules').then(r => r.data),
-  create: (data: { host_id?: number | null; cron_expr: string; enabled?: boolean }) =>
+  create: (data: { host_id?: number | null; cron_expr: string; enabled?: boolean; auto_disk_scan?: boolean }) =>
     api.post('/schedules', data).then(r => r.data),
-  update: (id: number, data: { cron_expr?: string; enabled?: boolean }) =>
+  update: (id: number, data: { cron_expr?: string; enabled?: boolean; auto_disk_scan?: boolean }) =>
     api.put(`/schedules/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/schedules/${id}`).then(r => r.data),
   run: (id: number) => api.post(`/schedules/${id}/run`).then(r => r.data),
+}
+
+// 磁盘扫描：后端队列执行，网页切走不影响
+export const diskScanApi = {
+  scanVm: (hostId: number, vmid: string) => api.post(`/hosts/${hostId}/scan-vm`, { vmid }).then(r => r.data),
+  batch: () => api.post('/disk-scans').then(r => r.data),
+  active: () => api.get('/disk-scans/active').then(r => r.data),
+  get: (id: number) => api.get(`/disk-scans/${id}`).then(r => r.data),
+  stop: (id: number) => api.post(`/disk-scans/${id}/stop`).then(r => r.data),
+  whitelist: () => api.get('/disk-whitelist').then(r => r.data),
+  whitelistAdd: (hostId: number, vmid: string) => api.post('/disk-whitelist', { host_id: hostId, vmid }).then(r => r.data),
+  whitelistRemove: (hostId: number, vmid: string) => api.delete(`/disk-whitelist/${hostId}/${vmid}`).then(r => r.data),
+  settings: () => api.get('/disk-settings').then(r => r.data),
+  saveSettings: (data: { clean_count: number; days: number }) => api.put('/disk-settings', data).then(r => r.data),
 }
 
 export const notificationsApi = {

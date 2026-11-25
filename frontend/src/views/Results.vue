@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { resultsApi, hostsApi } from '../api'
-import { formatTime } from '../time'
-import axios from 'axios'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { resultsApi, hostsApi, diskScanApi } from '../api'
+import { formatTime, formatDate } from '../time'
 
 const results = ref<any[]>([])
 const hosts = ref<any[]>([])
@@ -12,8 +11,6 @@ const pageSize = ref(20)
 const currentPage = ref(1)
 const filterHost = ref<number | null>(null)
 const filterStatus = ref('')
-const needsDiskTotal = ref(0)
-const scanningVmid = ref<string | null>(null)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const hostMap = computed(() => {
   const map: Record<number, string> = {}
@@ -28,18 +25,16 @@ onMounted(async () => {
     if (h.ok) hosts.value = h.data
   } catch {}
   await loadResults()
-  loadNeedsDiskCount()
+  pollLoop()
 })
 
-async function loadNeedsDiskCount() {
-  try {
-    const res = await resultsApi.list({ status: 'needs_disk_scan', limit: 1 })
-    if (res.ok) needsDiskTotal.value = res.total || 0
-  } catch {}
-}
+onUnmounted(() => {
+  disposed = true
+  clearTimeout(pollTimer)
+})
 
-async function loadResults() {
-  loading.value = true
+async function loadResults(silent = false) {
+  if (!silent) loading.value = true
   try {
     const offset = (currentPage.value - 1) * pageSize.value
     const params: any = { limit: pageSize.value, offset }
@@ -161,8 +156,6 @@ async function openDetail(r: any) {
   }
 }
 
-const batchScanning = ref(false)
-const batchProgress = ref('')
 const diskResult = ref<{ ok: boolean; text: string } | null>(null)
 const confirmBox = ref<{ title: string; message: string; confirmText: string; action: () => void } | null>(null)
 
@@ -176,67 +169,132 @@ function runConfirm() {
   action?.()
 }
 
-async function batchDiskScan() {
-  let targets: any[] = []
-  try {
-    const res = await resultsApi.list({ status: 'needs_disk_scan', limit: 100 })
-    if (res.ok) targets = res.data || []
-  } catch {}
-  if (targets.length === 0) return
-  askConfirm('批量磁盘扫描',
-    `将对 ${targets.length} 台待检测 VM 逐台执行磁盘扫描。\n每台约几秒到几分钟，期间请勿关闭页面。`,
-    '开始扫描',
-    async () => {
-      batchScanning.value = true
-      diskResult.value = null
-      let ok = 0
-      let fail = 0
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i]
-        batchProgress.value = `正在扫描 VM ${t.vmid}（${i + 1}/${targets.length}）`
-        try {
-          await axios.post(`/api/hosts/${t.host_id}/scan-vm`, { vmid: t.vmid })
-          ok++
-        } catch {
-          fail++
-        }
-      }
-      batchScanning.value = false
-      batchProgress.value = ''
-      diskResult.value = { ok: fail === 0, text: fail === 0 ? `批量磁盘扫描完成：成功 ${ok} 台` : `批量磁盘扫描完成：成功 ${ok} 台，失败 ${fail} 台` }
-      await loadResults()
-      loadNeedsDiskCount()
-    })
+// ---- 磁盘扫描：任务在服务器后台队列执行，切走/关闭页面不影响；这里只轮询展示进度 ----
+const diskJobs = ref<any[]>([])        // 进行中的任务
+const diskTasks = ref<any[]>([])       // 排队中/扫描中的 VM
+const lastJob = ref<any>(null)         // 最近一次结束的任务
+const needsTotal = ref(0)              // 待检测 VM 数
+const needsWhitelisted = ref(0)        // 其中在白名单内的
+const needsPending = computed(() => Math.max(0, needsTotal.value - needsWhitelisted.value))
+const lastDismissed = ref(Number(localStorage.getItem('diskScanLastDismissed')) || 0)
+const failList = ref<any[] | null>(null)
+let pollTimer: number | undefined
+let pollSeq = 0
+let disposed = false
+let lastSig = ''
+
+const taskMap = computed(() => {
+  const m: Record<string, string> = {}
+  diskTasks.value.forEach((t: any) => { m[`${t.host_id}:${t.vmid}`] = t.status })
+  return m
+})
+
+function taskState(r: any): string {
+  return taskMap.value[`${r.host_id}:${r.vmid}`] || ''
 }
 
-async function triggerDiskScan(vmid: string) {
-  const result = results.value.find(r => r.vmid === vmid)
-  const hostId = result?.host_id
-  askConfirm('磁盘扫描',
-    `确定对 VM ${vmid} 执行磁盘扫描？\n将只读挂载磁盘镜像逐项检查切鸡特征，约几秒到几分钟。`,
+// 可手动磁盘扫描：待检测、命中（GA 不可用时只能靠磁盘复查）、检测失败、上次就是磁盘扫描的、白名单内的
+function canDiskScan(r: any): boolean {
+  return ['needs_disk_scan', 'detected', 'confirmed', 'error'].includes(r.status) || r.method === 'disk' || !!r.wl_active
+}
+
+async function pollDisk() {
+  const seq = ++pollSeq
+  try {
+    const res = await diskScanApi.active()
+    if (seq !== pollSeq || !res.ok) return  // 已有更新的请求发出：丢弃迟到的旧响应，避免进度回退
+    const d = res.data
+    diskJobs.value = d.jobs || []
+    diskTasks.value = d.tasks || []
+    lastJob.value = d.last
+    needsTotal.value = d.needs_total || 0
+    needsWhitelisted.value = d.needs_whitelisted || 0
+    // 有 VM 扫完或任务结束（含停止后在途那台扫完）→ 静默刷新列表
+    const sig = diskJobs.value.map((j: any) => `${j.id}:${j.done}`).join(',') + '|' + (d.last ? `${d.last.id}:${d.last.done}` : '')
+    if (lastSig && sig !== lastSig) loadResults(true)
+    lastSig = sig
+  } catch {}
+}
+
+async function pollLoop() {
+  await pollDisk()
+  if (disposed) return
+  clearTimeout(pollTimer)  // 保证只有一个待执行的定时器（提交操作后会立即重启轮询）
+  pollTimer = window.setTimeout(pollLoop, diskJobs.value.length ? 3000 : 10000)
+}
+
+function sourceLabel(s: string) {
+  return ({ single: '单台', batch: '批量', schedule: '定时自动' } as Record<string, string>)[s] || s
+}
+
+function jobEndLabel(s: string) {
+  return ({ completed: '已完成', stopped: '已停止', interrupted: '服务重启中断' } as Record<string, string>)[s] || s
+}
+
+function runningText(j: any) {
+  const names = diskTasks.value
+    .filter((t: any) => t.job_id === j.id && t.status === 'running')
+    .map((t: any) => `VM ${t.vmid}（${hostMap.value[t.host_id] || '#' + t.host_id}）`)
+  return names.length ? `正在扫描：${names.join('、')}` : '排队中'
+}
+
+function jobPercent(j: any) {
+  return j.total ? Math.round(((j.done + j.skipped) / j.total) * 100) : 0
+}
+
+async function submit(p: Promise<any>) {
+  try {
+    const res = await p
+    diskResult.value = { ok: !!res.ok, text: res.ok ? (res.message || '已提交') : (res.error || '操作失败') }
+    return !!res.ok
+  } catch (e: any) {
+    diskResult.value = { ok: false, text: e.response?.data?.error || '请求失败' }
+    return false
+  } finally {
+    pollLoop()  // 立即刷新并切到 3 秒轮询
+  }
+}
+
+function batchDiskScan() {
+  const skip = needsWhitelisted.value ? `（白名单内 ${needsWhitelisted.value} 台跳过）` : ''
+  askConfirm('批量磁盘扫描',
+    `将对 ${needsPending.value} 台待检测 VM 执行磁盘扫描${skip}。\n任务在服务器后台执行，可以离开本页面或关闭浏览器；同一宿主机逐台扫描，不同宿主机并行。`,
     '开始扫描',
-    async () => {
-      scanningVmid.value = vmid
-      diskResult.value = null
-      try {
-        if (!hostId) {
-          diskResult.value = { ok: false, text: '未找到主机信息' }
-          return
-        }
-        const res = await axios.post(`/api/hosts/${hostId}/scan-vm`, { vmid })
-        if (res.data.ok) {
-          diskResult.value = { ok: true, text: `VM ${vmid} 磁盘扫描完成，结果已更新` }
-        } else {
-          diskResult.value = { ok: false, text: res.data.error || '扫描失败' }
-        }
-      } catch (e: any) {
-        diskResult.value = { ok: false, text: e.response?.data?.error || '请求失败' }
-      } finally {
-        scanningVmid.value = null
-        await loadResults()
-        loadNeedsDiskCount()
-      }
-    })
+    () => { submit(diskScanApi.batch()) })
+}
+
+function triggerDiskScan(r: any) {
+  askConfirm('磁盘扫描',
+    `确定对 VM ${r.vmid} 执行磁盘扫描？\n将只读挂载磁盘镜像逐项检查切鸡特征，约几秒到几分钟。任务在服务器后台执行，可以离开本页面。`,
+    '开始扫描',
+    () => { submit(diskScanApi.scanVm(r.host_id, r.vmid)) })
+}
+
+function stopJob(j: any) {
+  askConfirm('停止磁盘扫描',
+    `停止后，尚未开始的 VM 不再扫描；正在扫描的那台会扫完。`,
+    '停止',
+    () => { submit(diskScanApi.stop(j.id)) })
+}
+
+async function toggleWhitelist(r: any) {
+  const ok = await submit(r.wl_active
+    ? diskScanApi.whitelistRemove(r.host_id, r.vmid)
+    : diskScanApi.whitelistAdd(r.host_id, r.vmid))
+  if (ok) loadResults(true)
+}
+
+function dismissLast() {
+  if (!lastJob.value) return
+  lastDismissed.value = lastJob.value.id
+  localStorage.setItem('diskScanLastDismissed', String(lastJob.value.id))
+}
+
+async function showFailures(j: any) {
+  try {
+    const res = await diskScanApi.get(j.id)
+    if (res.ok) failList.value = (res.data.tasks || []).filter((t: any) => t.status === 'error' || t.status === 'cancelled')
+  } catch {}
 }
 
 function getPageNumbers() {
@@ -280,19 +338,45 @@ function getPageNumbers() {
     </div>
 
     <!-- 无 Guest Agent 提示条 -->
-    <div v-if="needsDiskTotal > 0" class="card" style="margin-bottom: 16px; background: rgba(255,149,0,0.04); border: 1px solid rgba(255,149,0,0.15);">
+    <div v-if="needsTotal > 0" class="card" style="margin-bottom: 16px; background: rgba(255,149,0,0.04); border: 1px solid rgba(255,149,0,0.15);">
       <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
         <span style="font-size: 24px;">💾</span>
         <div style="flex: 1; min-width: 200px;">
-          <div style="font-weight: 600;">{{ needsDiskTotal }} 个 VM 未安装 Guest Agent</div>
+          <div style="font-weight: 600;">{{ needsTotal }} 个 VM 未安装 Guest Agent</div>
           <div style="font-size: 13px; color: var(--text-secondary); margin-top: 2px;">
-            {{ batchScanning ? batchProgress : '这些 VM 无法通过 GA 检测，可逐台或批量执行磁盘扫描' }}
+            这些 VM 无法通过 GA 检测，可逐台或批量执行磁盘扫描（服务器后台执行，可离开本页面）<template v-if="needsWhitelisted">；其中 {{ needsWhitelisted }} 台在白名单内，批量与定时扫描会跳过</template>
           </div>
         </div>
-        <button class="btn btn-primary" @click="batchDiskScan" :disabled="batchScanning">
-          {{ batchScanning ? '批量扫描中...' : '批量磁盘扫描' }}
-        </button>
+        <button class="btn btn-primary" @click="batchDiskScan" :disabled="needsPending === 0">批量磁盘扫描</button>
       </div>
+    </div>
+
+    <!-- 进行中的磁盘扫描任务 -->
+    <div v-for="j in diskJobs" :key="j.id" class="card" style="margin-bottom: 16px; border: 1px solid rgba(0,122,255,0.18); background: rgba(0,122,255,0.03);">
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <div class="spinner" style="width: 20px; height: 20px; flex-shrink: 0;"></div>
+        <div style="flex: 1; min-width: 220px;">
+          <div style="font-weight: 600;">磁盘扫描进行中（{{ sourceLabel(j.source) }}）：{{ j.done }} / {{ j.total }}</div>
+          <div class="job-progress"><div :style="{ width: jobPercent(j) + '%' }"></div></div>
+          <div style="font-size: 13px; color: var(--text-secondary);">
+            命中 {{ j.found }} · 失败 {{ j.failed }} · {{ runningText(j) }}
+          </div>
+        </div>
+        <button class="btn btn-sm btn-secondary" @click="stopJob(j)">停止</button>
+      </div>
+    </div>
+
+    <!-- 最近一次磁盘扫描结果 -->
+    <div v-if="!diskJobs.length && lastJob && lastJob.id !== lastDismissed"
+      style="margin-bottom: 16px; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px; flex-wrap: wrap;"
+      :style="{ background: lastJob.failed || lastJob.skipped ? 'rgba(255,149,0,0.06)' : 'rgba(52,199,89,0.08)', border: '1px solid ' + (lastJob.failed || lastJob.skipped ? 'rgba(255,149,0,0.2)' : 'rgba(52,199,89,0.2)') }">
+      <span style="font-size: 18px;">{{ lastJob.found ? '🚨' : (lastJob.failed || lastJob.skipped ? '⚠️' : '✅') }}</span>
+      <span style="font-size: 14px; flex: 1; min-width: 240px;">
+        最近一次磁盘扫描（{{ sourceLabel(lastJob.source) }}，{{ jobEndLabel(lastJob.status) }}，{{ formatTime(lastJob.completed_at) }}）：
+        共 {{ lastJob.total }} 台，干净 {{ lastJob.done - lastJob.found - lastJob.failed }}，命中 {{ lastJob.found }}，失败 {{ lastJob.failed }}<template v-if="lastJob.skipped">，未执行 {{ lastJob.skipped }}</template>
+      </span>
+      <button v-if="lastJob.failed || lastJob.skipped" class="btn btn-sm btn-secondary" @click="showFailures(lastJob)">查看未成功</button>
+      <button class="btn btn-sm btn-secondary" @click="dismissLast">关闭</button>
     </div>
 
     <!-- 磁盘扫描结果条 -->
@@ -329,7 +413,13 @@ function getPageNumbers() {
               <tr v-for="r in results" :key="r.id">
                 <td style="font-weight: 600;">VM {{ r.vmid }}</td>
                 <td>{{ hostMap[r.host_id] || `#${r.host_id}` }}</td>
-                <td><span :class="['badge', statusBadge(r.status)]">{{ statusLabel(r.status) }}</span></td>
+                <td>
+                  <span :class="['badge', statusBadge(r.status)]">{{ statusLabel(r.status) }}</span>
+                  <span v-if="r.wl_active" class="wl-badge"
+                    :title="(r.wl_source === 'manual' ? '手动加入' : '磁盘扫描连续干净自动加入') + '，' + formatDate(r.wl_expires_at) + ' 失效；批量与定时磁盘扫描跳过'">
+                    白名单·至{{ formatDate(r.wl_expires_at).replace(/^\d{4}\//, '') }}
+                  </span>
+                </td>
                 <td><code style="font-size: 12px;">{{ r.method || '-' }}</code></td>
                 <td style="font-size: 13px; max-width: 300px;">
                   <div v-if="evidenceItems(r.evidence).length" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
@@ -341,12 +431,19 @@ function getPageNumbers() {
                 <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(r.first_seen) }}</td>
                 <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(r.last_seen) }}</td>
                 <td>
-                  <button v-if="r.status === 'needs_disk_scan'"
-                    class="btn btn-sm btn-secondary"
-                    @click="triggerDiskScan(r.vmid)"
-                    :disabled="scanningVmid === r.vmid">
-                    {{ scanningVmid === r.vmid ? '扫描中...' : '磁盘扫描' }}
-                  </button>
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                    <button v-if="canDiskScan(r)"
+                      class="btn btn-sm btn-secondary"
+                      @click="triggerDiskScan(r)"
+                      :disabled="!!taskState(r)">
+                      {{ taskState(r) === 'running' ? '扫描中...' : taskState(r) === 'pending' ? '排队中...' : '磁盘扫描' }}
+                    </button>
+                    <button v-if="r.wl_active || r.status === 'needs_disk_scan'"
+                      class="btn btn-sm btn-secondary"
+                      @click="toggleWhitelist(r)">
+                      {{ r.wl_active ? '移出白名单' : '加入白名单' }}
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -383,6 +480,24 @@ function getPageNumbers() {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 磁盘扫描未成功明细 -->
+    <div v-if="failList" class="modal-overlay" @click.self="failList = null">
+      <div class="modal" style="max-width: 560px;">
+        <div class="modal-header">未成功的 VM（{{ failList.length }} 台）</div>
+        <div class="modal-body" style="max-height: 420px; overflow-y: auto;">
+          <div v-for="t in failList" :key="t.id"
+            style="display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px;">
+            <span style="font-weight: 600; white-space: nowrap;">VM {{ t.vmid }}</span>
+            <span style="color: var(--text-secondary); white-space: nowrap;">{{ hostMap[t.host_id] || `#${t.host_id}` }}</span>
+            <span style="color: var(--text-secondary); word-break: break-all;">{{ t.status === 'cancelled' ? '未执行：' : '' }}{{ t.detail || '-' }}</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="failList = null">关闭</button>
         </div>
       </div>
     </div>
@@ -462,6 +577,30 @@ function getPageNumbers() {
   color: var(--red);
   border: 1px solid rgba(255, 59, 48, 0.2);
   white-space: nowrap;
+}
+.wl-badge {
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  background: rgba(0, 122, 255, 0.08);
+  color: var(--accent);
+  border: 1px solid rgba(0, 122, 255, 0.2);
+  white-space: nowrap;
+}
+.job-progress {
+  height: 6px;
+  margin: 8px 0 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+.job-progress > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s;
 }
 .pagination {
   display: flex;

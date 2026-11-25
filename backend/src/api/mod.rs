@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod diskscan;
 pub mod hosts;
 pub mod notifications;
 pub mod passkey;
@@ -41,6 +42,13 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/schedules", get(schedules::list).post(schedules::create))
         .route("/schedules/{id}", put(schedules::update).delete(schedules::remove))
         .route("/schedules/{id}/run", post(schedules::run_now))
+        .route("/disk-scans", post(diskscan::create_batch))
+        .route("/disk-scans/active", get(diskscan::active))
+        .route("/disk-scans/{id}", get(diskscan::get))
+        .route("/disk-scans/{id}/stop", post(diskscan::stop))
+        .route("/disk-whitelist", get(diskscan::whitelist_list).post(diskscan::whitelist_add))
+        .route("/disk-whitelist/{host_id}/{vmid}", delete(diskscan::whitelist_remove))
+        .route("/disk-settings", get(diskscan::settings_get).put(diskscan::settings_update))
         .route("/notifications", get(notifications::list).post(notifications::create))
         .route("/notifications/{id}", put(notifications::update))
         .route("/notifications/test", post(notifications::test))

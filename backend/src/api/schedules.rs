@@ -9,12 +9,14 @@ pub struct CreateReq {
     pub host_id: Option<i64>,
     pub cron_expr: String,
     pub enabled: Option<bool>,
+    pub auto_disk_scan: Option<bool>,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateReq {
     pub cron_expr: Option<String>,
     pub enabled: Option<bool>,
+    pub auto_disk_scan: Option<bool>,
 }
 
 pub async fn list(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -34,6 +36,7 @@ pub async fn create(State(state): State<Arc<AppState>>, Json(body): Json<CreateR
         host_id: body.host_id,
         cron_expr: body.cron_expr.trim().to_string(),
         enabled: body.enabled,
+        auto_disk_scan: body.auto_disk_scan,
     }).await {
         Ok(s) => s,
         Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
@@ -48,7 +51,7 @@ pub async fn update(State(state): State<Arc<AppState>>, Path(id): Path<i64>, Jso
             return Json(json!({"ok": false, "error": "cron 表达式无效"}));
         }
     }
-    let s = match db::update_schedule(&state.db, id, body.cron_expr.as_deref(), body.enabled).await {
+    let s = match db::update_schedule(&state.db, id, body.cron_expr.as_deref(), body.enabled, body.auto_disk_scan).await {
         Ok(s) => s,
         Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
     };
@@ -83,9 +86,12 @@ pub async fn run_now(State(state): State<Arc<AppState>>, Path(id): Path<i64>) ->
     let state_clone = state.clone();
     let scan_id = scan.id;
     let host_id = schedule.host_id;
+    let auto_disk = schedule.auto_disk_scan;
     tokio::spawn(async move {
-        if let Err(e) = crate::detect::run_scan(state_clone, scan_id, host_id).await {
-            tracing::error!("Manual scheduled scan {} failed: {}", scan_id, e);
+        match crate::detect::run_scan(state_clone.clone(), scan_id, host_id).await {
+            Ok(outcome) if auto_disk => crate::diskscan::enqueue_after_scan(&state_clone, scan_id, outcome).await,
+            Ok(_) => {}
+            Err(e) => tracing::error!("Manual scheduled scan {} failed: {}", scan_id, e),
         }
     });
     let next = crate::scheduler::compute_next_run(&schedule.cron_expr);

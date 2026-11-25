@@ -55,8 +55,24 @@ fn validate_ssh_target(s: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 执行命令，可选超时。超时后 future 被丢弃，kill_on_drop 会杀掉本地 ssh/sshpass 进程
+async fn output_with_limit(cmd: &mut Command, limit: Option<std::time::Duration>) -> anyhow::Result<std::io::Result<std::process::Output>> {
+    cmd.kill_on_drop(true);
+    match limit {
+        Some(d) => tokio::time::timeout(d, cmd.output())
+            .await
+            .map_err(|_| anyhow::anyhow!("SSH 执行超时（{} 秒）", d.as_secs())),
+        None => Ok(cmd.output().await),
+    }
+}
+
 /// SSH 命令执行
 pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &str) -> anyhow::Result<String> {
+    ssh_exec_timeout(host, port, user, auth, cmd, None).await
+}
+
+/// SSH 命令执行（可选本地超时；超时也会清理临时密码/私钥文件）
+pub async fn ssh_exec_timeout(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &str, limit: Option<std::time::Duration>) -> anyhow::Result<String> {
     validate_ssh_target(host)?;
     validate_ssh_target(user)?;
 
@@ -86,15 +102,12 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
             args.push(format!("{}@{}", user, host));
             args.push(cmd.to_string());
 
-            let output = Command::new("sshpass")
-                .args(["-f", &pass_file])
-                .arg("ssh")
-                .args(&args)
-                .output()
-                .await;
+            let mut command = Command::new("sshpass");
+            command.args(["-f", &pass_file]).arg("ssh").args(&args);
+            let output = output_with_limit(&mut command, limit).await;
 
             let _ = tokio::fs::remove_file(&pass_file).await;
-            let output = output.map_err(|_| anyhow::anyhow!("sshpass 未安装"))?;
+            let output = output?.map_err(|_| anyhow::anyhow!("sshpass 未安装"))?;
             if !output.status.success() && output.stdout.is_empty() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(anyhow::anyhow!("SSH 执行失败: {}", stderr.trim()));
@@ -120,14 +133,14 @@ pub async fn ssh_exec(host: &str, port: u16, user: &str, auth: &SshAuth, cmd: &s
     args.push(format!("{}@{}", user, host));
     args.push(cmd.to_string());
 
-    let output = Command::new("ssh")
-        .args(&args)
-        .output()
-        .await?;
+    let mut command = Command::new("ssh");
+    command.args(&args);
+    let output = output_with_limit(&mut command, limit).await;
 
     if let Some(path) = key_file_path {
         let _ = tokio::fs::remove_file(path).await;
     }
+    let output = output??;
 
     if !output.status.success() && output.stdout.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -236,15 +249,14 @@ pub async fn deploy_script(host: &str, port: u16, user: &str, auth: &SshAuth) ->
     Ok(())
 }
 
-/// 远程执行检测
-pub async fn run_remote_scan(host: &str, port: u16, user: &str, auth: &SshAuth, vmid: Option<&str>) -> anyhow::Result<String> {
-    let cmd = match vmid {
-        // 单台扫描由「磁盘扫描」按钮触发，强制磁盘挂载模式（GA被禁/无GA都能查）
-        Some(id) => format!("chicken-check --vmid {} --disk", id),
-        None => "chicken-check --all".to_string(),
-    };
-    let result = ssh_exec(host, port, user, auth, &cmd).await?;
-    Ok(result)
+/// 单台 VM 磁盘扫描（强制磁盘挂载模式，GA 被禁/无 GA 都能查）
+/// 远端 timeout 300 秒兜底（脚本 trap 会卸载并断开 nbd），本地 360 秒强制断开
+pub async fn run_remote_disk_scan(host: &str, port: u16, user: &str, auth: &SshAuth, vmid: &str) -> anyhow::Result<String> {
+    if !crate::diskscan::is_valid_vmid(vmid) {
+        return Err(anyhow::anyhow!("VMID 非法"));
+    }
+    let cmd = format!("timeout -k 15 300 chicken-check --vmid {} --disk", vmid);
+    ssh_exec_timeout(host, port, user, auth, &cmd, Some(std::time::Duration::from_secs(360))).await
 }
 
 /// 远程执行任意命令

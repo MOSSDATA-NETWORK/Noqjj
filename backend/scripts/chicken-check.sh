@@ -1,5 +1,5 @@
 #!/bin/bash
-# chicken-check.sh — PVE 切鸡检测脚本 (v13)
+# chicken-check.sh — PVE 切鸡检测脚本 (v14)
 # 用法:
 #   chicken-check.sh --all                  批量扫描（并行，GA模式进VM检查，无GA标记needs_disk）
 #   chicken-check.sh --vmid <id>            单台扫描（GA优先，无GA则磁盘挂载）
@@ -36,7 +36,7 @@ while [[ $# -gt 0 ]]; do
         --disk) FORCE_DISK=true; shift ;;
         --oneline) ONELINE=true; shift ;;
         --check-agent) echo '{"ok":true,"agent":"installed"}'; exit 0 ;;
-        --version) echo "13"; exit 0 ;;
+        --version) echo "14"; exit 0 ;;
         *) shift ;;
     esac
 done
@@ -150,6 +150,13 @@ check_vm_ga() {
 }
 
 # 磁盘挂载检测：复制磁盘→qemu-nbd只读挂载→检查文件系统
+# v14：被超时 kill / 断线时卸载并断开 nbd，避免残留挂载占住 /dev/nbd1
+disk_cleanup() {
+    umount -l "$MOUNT_POINT" 2>/dev/null
+    qemu-nbd --disconnect /dev/nbd1 >/dev/null 2>&1
+    rmdir "$MOUNT_POINT" 2>/dev/null
+}
+
 check_vm_disk() {
     local vmid="$1"
     # 查找磁盘路径（支持 local-lvm 和 dir 存储）
@@ -162,6 +169,17 @@ check_vm_disk() {
     disk_vol=$(echo "$disk_line" | sed 's/^[^:]*: *//; s/,.*//')
 
     local nbd_dev="/dev/nbd1"
+    # v14：每台宿主机只有一个 /dev/nbd1，磁盘扫描互斥（平台已按宿主机串行，这里防手动/多实例并发）
+    exec 9>/var/lock/chicken-check-disk.lock
+    if ! flock -w 120 9; then
+        echo "error|disk|disk_busy"; return
+    fi
+    trap 'disk_cleanup; exit 143' TERM INT HUP
+    # v14：清理上次异常退出残留的挂载（否则 nbd1 断不开，后续挂载全部失败）
+    awk '$1 ~ /^\/dev\/nbd1(p[0-9]+)?$/ {print $2}' /proc/mounts | while read -r mp; do
+        umount -l "$mp" 2>/dev/null
+        case "$mp" in /tmp/chicken-mount-*) rmdir "$mp" 2>/dev/null ;; esac
+    done
     modprobe nbd max_part=8 2>/dev/null || true
     qemu-nbd --disconnect "$nbd_dev" >/dev/null 2>&1 || true
     sleep 1
@@ -174,7 +192,8 @@ check_vm_disk() {
     fi
 
     # LVM 块设备直接连，qcow2/raw 文件也可连
-    if ! qemu-nbd --read-only --connect="$nbd_dev" "$real_path" 2>/dev/null; then
+    # 9>&-：锁的文件描述符不传给 qemu-nbd 后台进程/挂载助手，否则脚本被强杀后它们残留会一直占着锁
+    if ! qemu-nbd --read-only --connect="$nbd_dev" "$real_path" 9>&- 2>/dev/null; then
         echo "error|disk|nbd_failed"; return
     fi
     sleep 2
@@ -192,11 +211,11 @@ check_vm_disk() {
             xfs)            mopts="ro,norecovery" ;;
             btrfs)          mopts="ro" ;;
         esac
-        if mount -o "$mopts" "/dev/$part" "$MOUNT_POINT" 2>/dev/null; then
+        if mount -o "$mopts" "/dev/$part" "$MOUNT_POINT" 9>&- 2>/dev/null; then
             mounted=1; break
         fi
         # 兜底：纯只读再试一次
-        if mount -o ro "/dev/$part" "$MOUNT_POINT" 2>/dev/null; then
+        if mount -o ro "/dev/$part" "$MOUNT_POINT" 9>&- 2>/dev/null; then
             mounted=1; break
         fi
     done

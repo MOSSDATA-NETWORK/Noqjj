@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { notificationsApi, versionApi, passkeyApi, hostsApi, schedulesApi } from '../api'
+import { notificationsApi, versionApi, passkeyApi, hostsApi, schedulesApi, diskScanApi } from '../api'
 import { registerPasskey, isWebAuthnSupported } from '../passkey'
 import axios from 'axios'
 import { marked } from 'marked'
@@ -57,7 +57,7 @@ const schedHosts = ref<any[]>([])
 const showSchedModal = ref(false)
 const schedSaving = ref(false)
 const schedError = ref('')
-const schedForm = ref({ host_id: null as number | null, freq: 'daily', time: '03:00', weekday: 1, cron: '' })
+const schedForm = ref({ host_id: null as number | null, freq: 'daily', time: '03:00', weekday: 1, cron: '', auto_disk: false })
 
 function buildCron(): string {
   const f = schedForm.value
@@ -92,7 +92,7 @@ function schedHostName(s: any): string {
 }
 
 function openScheduleModal() {
-  schedForm.value = { host_id: null, freq: 'daily', time: '03:00', weekday: 1, cron: '' }
+  schedForm.value = { host_id: null, freq: 'daily', time: '03:00', weekday: 1, cron: '', auto_disk: false }
   schedError.value = ''
   showSchedModal.value = true
 }
@@ -103,7 +103,7 @@ async function saveSchedule() {
   schedSaving.value = true
   schedError.value = ''
   try {
-    const res = await schedulesApi.create({ host_id: schedForm.value.host_id, cron_expr: cron, enabled: true })
+    const res = await schedulesApi.create({ host_id: schedForm.value.host_id, cron_expr: cron, enabled: true, auto_disk_scan: schedForm.value.auto_disk })
     if (res.ok) {
       showSchedModal.value = false
       await loadSchedules()
@@ -120,6 +120,51 @@ async function saveSchedule() {
 async function toggleSchedule(s: any) {
   await schedulesApi.update(s.id, { enabled: !s.enabled })
   await loadSchedules()
+}
+
+async function toggleAutoDisk(s: any) {
+  await schedulesApi.update(s.id, { auto_disk_scan: !s.auto_disk_scan })
+  await loadSchedules()
+}
+
+// ---- 磁盘扫描白名单 ----
+const wlSettings = ref({ clean_count: 3, days: 30 })
+const wlList = ref<any[]>([])
+const wlSaving = ref(false)
+const wlMsg = ref<{ ok: boolean; text: string } | null>(null)
+
+async function loadWhitelist() {
+  try {
+    const s = await diskScanApi.settings()
+    if (s.ok) wlSettings.value = s.data
+  } catch {}
+  try {
+    const res = await diskScanApi.whitelist()
+    if (res.ok) wlList.value = res.data || []
+  } catch {}
+}
+
+async function saveWlSettings() {
+  wlSaving.value = true
+  wlMsg.value = null
+  try {
+    const res = await diskScanApi.saveSettings({
+      clean_count: Number(wlSettings.value.clean_count),
+      days: Number(wlSettings.value.days),
+    })
+    wlMsg.value = res.ok ? { ok: true, text: '已保存' } : { ok: false, text: res.error || '保存失败' }
+    if (res.ok) await loadWhitelist()
+  } catch (e: any) {
+    wlMsg.value = { ok: false, text: e.response?.data?.error || '请求失败' }
+  } finally {
+    wlSaving.value = false
+  }
+}
+
+async function removeWhitelist(w: any) {
+  if (!confirm(`确定将 VM ${w.vmid}（${w.host_name || '#' + w.host_id}）移出白名单？移出后连续干净次数清零。`)) return
+  await diskScanApi.whitelistRemove(w.host_id, w.vmid)
+  await loadWhitelist()
 }
 
 async function runSchedule(s: any) {
@@ -142,6 +187,7 @@ onMounted(async () => {
   loadNotifications()
   loadVersion()
   loadSchedules()
+  loadWhitelist()
   passkeySupported.value = isWebAuthnSupported()
   checkPasskeyStatus()
 })
@@ -592,6 +638,7 @@ async function deletePasskey() {
               <th>频率（cron）</th>
               <th>上次执行</th>
               <th>下次执行</th>
+              <th>自动磁盘扫描</th>
               <th>状态</th>
               <th>操作</th>
             </tr>
@@ -602,6 +649,12 @@ async function deletePasskey() {
               <td><code style="font-size: 12px;">{{ scheduleDesc(s) }}</code></td>
               <td style="font-size: 13px; color: var(--text-secondary);">{{ s.last_run ? formatTime(s.last_run) : '从未执行' }}</td>
               <td style="font-size: 13px; color: var(--text-secondary);">{{ s.enabled && s.next_run ? formatTime(s.next_run) : '-' }}</td>
+              <td>
+                <span :class="['badge', s.auto_disk_scan ? 'badge-online' : 'badge-unknown']" style="cursor: pointer;"
+                  title="点击切换：扫描完成后是否自动对「待检测」VM 做磁盘扫描" @click="toggleAutoDisk(s)">
+                  {{ s.auto_disk_scan ? '开启' : '关闭' }}
+                </span>
+              </td>
               <td>
                 <span :class="['badge', s.enabled ? 'badge-online' : 'badge-unknown']" style="cursor: pointer;" @click="toggleSchedule(s)">
                   {{ s.enabled ? '已启用' : '已停用' }}
@@ -661,12 +714,72 @@ async function deletePasskey() {
             <label class="form-label">cron 表达式（分 时 日 月 周）</label>
             <input class="form-input" v-model="schedForm.cron" placeholder="例如 30 4 * * * 表示每天 04:30" />
           </div>
+          <div class="form-group">
+            <label style="display: flex; gap: 8px; align-items: flex-start; cursor: pointer;">
+              <input type="checkbox" v-model="schedForm.auto_disk" style="margin-top: 3px;" />
+              <span>
+                <span style="font-weight: 500;">扫描完成后自动磁盘扫描</span>
+                <span style="display: block; font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; line-height: 1.6;">
+                  对本次「待检测」（无 Guest Agent）的 VM 在服务器后台逐台做磁盘扫描，白名单内的跳过
+                </span>
+              </span>
+            </label>
+          </div>
           <div v-if="schedError" style="color: var(--red); font-size: 14px; margin-top: 8px;">{{ schedError }}</div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="showSchedModal = false">取消</button>
           <button class="btn btn-primary" @click="saveSchedule" :disabled="schedSaving">{{ schedSaving ? '保存中...' : '保存' }}</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Disk Scan Whitelist Section -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin: 28px 0 16px;">
+      <h2 style="font-size: 20px; font-weight: 600;">磁盘扫描白名单</h2>
+    </div>
+
+    <div class="card">
+      <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+        <div class="form-group" style="margin: 0;">
+          <label class="form-label">连续干净几次自动加入</label>
+          <input type="number" min="0" max="100" class="form-input" style="width: 160px;" v-model.number="wlSettings.clean_count" />
+        </div>
+        <div class="form-group" style="margin: 0;">
+          <label class="form-label">加入后有效天数</label>
+          <input type="number" min="1" max="3650" class="form-input" style="width: 160px;" v-model.number="wlSettings.days" />
+        </div>
+        <button class="btn btn-primary" @click="saveWlSettings" :disabled="wlSaving">{{ wlSaving ? '保存中...' : '保存' }}</button>
+        <span v-if="wlMsg" style="font-size: 14px;" :style="{ color: wlMsg.ok ? 'var(--green)' : 'var(--red)' }">{{ wlMsg.text }}</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); margin: 12px 0 0; line-height: 1.7;">
+        VM 磁盘扫描连续干净达到次数后自动加入白名单，之后批量和定时磁盘扫描都跳过它；到期自动失效并重新累计。任何一次检测命中立即移出。
+        手动单台扫描不受白名单限制。次数填 0 表示不自动加入（仍可在「检测结果」页手动加入）。
+      </p>
+      <div v-if="wlList.length === 0" style="font-size: 13px; color: var(--text-tertiary); margin-top: 14px;">暂无白名单</div>
+      <div v-else class="table-container" style="margin-top: 14px;">
+        <table>
+          <thead>
+            <tr>
+              <th>VM</th>
+              <th>主机</th>
+              <th>来源</th>
+              <th>加入时间</th>
+              <th>失效时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="w in wlList" :key="w.host_id + ':' + w.vmid">
+              <td style="font-weight: 600;">VM {{ w.vmid }}</td>
+              <td>{{ w.host_name || '#' + w.host_id }}</td>
+              <td style="font-size: 13px;">{{ w.source === 'manual' ? '手动加入' : `自动（连续干净 ${w.clean_streak} 次）` }}</td>
+              <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(w.whitelisted_at) }}</td>
+              <td style="font-size: 13px; color: var(--text-secondary);">{{ formatTime(w.expires_at) }}</td>
+              <td><button class="btn btn-sm btn-secondary" style="color: var(--red);" @click="removeWhitelist(w)">移出</button></td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 

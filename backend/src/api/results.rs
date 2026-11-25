@@ -21,13 +21,32 @@ pub async fn list(State(state): State<Arc<AppState>>, Query(params): Query<ListP
     let total = db::count_results(&state.db, params.host_id, status_ref).await;
 
     match (results, total) {
-        (Ok(results), Ok(total)) => Json(json!({
-            "ok": true,
-            "data": results,
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        })),
+        (Ok(results), Ok(total)) => {
+            // 附带磁盘扫描白名单信息（列表徽标与加入/移出按钮用）
+            let wl = crate::diskscan::whitelist_map(&state.db).await;
+            let data: Vec<Value> = results
+                .into_iter()
+                .map(|r| {
+                    let mut v = serde_json::to_value(&r).unwrap_or(Value::Null);
+                    if let (Some(obj), Some(hid)) = (v.as_object_mut(), r.host_id) {
+                        if let Some(w) = wl.get(&(hid, r.vmid.clone())) {
+                            obj.insert("wl_active".into(), json!(w.active));
+                            obj.insert("wl_expires_at".into(), json!(w.expires_at));
+                            obj.insert("wl_source".into(), json!(w.source));
+                            obj.insert("clean_streak".into(), json!(w.clean_streak));
+                        }
+                    }
+                    v
+                })
+                .collect();
+            Json(json!({
+                "ok": true,
+                "data": data,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }))
+        }
         (Err(e), _) | (_, Err(e)) => Json(json!({"ok": false, "error": e.to_string()})),
     }
 }

@@ -4,6 +4,7 @@ mod crypto;
 mod db;
 mod deploy;
 mod detect;
+mod diskscan;
 mod notify;
 mod passkey;
 mod ratelimit;
@@ -24,6 +25,7 @@ pub struct AppState {
     pub login_limiter: ratelimit::RateLimiter,
     pub static_dir: String,
     pub index_html: String,
+    pub disk_scan: diskscan::DiskScanManager,
 }
 
 #[tokio::main]
@@ -48,6 +50,12 @@ async fn main() -> anyhow::Result<()> {
     sqlx::query(include_str!("../migrations/002_result_history.sql"))
         .execute(&pool)
         .await?;
+    sqlx::query(include_str!("../migrations/003_disk_scan.sql"))
+        .execute(&pool)
+        .await?;
+    ensure_column(&pool, "schedules", "auto_disk_scan", "INTEGER NOT NULL DEFAULT 0").await?;
+    // 上次运行未完成的磁盘扫描任务标记为中断（不自动续跑）
+    diskscan::mark_interrupted(&pool).await;
 
     // 加密密钥：优先从环境变量读取，否则自动生成并打印
     let master_key = load_or_generate_master_key();
@@ -72,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
         login_limiter: ratelimit::RateLimiter::new(5, 300), // 5次/5分钟
         static_dir: static_dir.clone(),
         index_html,
+        disk_scan: diskscan::DiskScanManager::default(),
     });
 
     // 启动定时任务调度器
@@ -214,6 +223,22 @@ async fn main() -> anyhow::Result<()> {
         axum::serve(listener, app).await?;
     }
 
+    Ok(())
+}
+
+/// 幂等加列：列不存在才 ALTER（SQLite 没有 ADD COLUMN IF NOT EXISTS）
+async fn ensure_column(pool: &sqlx::SqlitePool, table: &str, column: &str, decl: &str) -> anyhow::Result<()> {
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?")
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+    if exists == 0 {
+        sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, decl))
+            .execute(pool)
+            .await?;
+        tracing::info!("数据库已添加列 {}.{}", table, column);
+    }
     Ok(())
 }
 
